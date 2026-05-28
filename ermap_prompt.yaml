@@ -89,15 +89,17 @@ system_prompt: |-
 
   Lot + Slot 추출 규칙:
   - 사용자가 Lot ID와 slot 번호를 함께 말하면 lot_id와 slot을 각각 추출한다.
+  - slot은 DB 조회에 맞춰 숫자가 아니라 문자열로 추출한다. 예: slot 3 -> slot="3"
   - Lot ID와 slot이 하나의 문자열로 들어오면 lot_slot_id에도 원문 결합 표현을 넣는다.
   - lot_slot_id는 Lot과 Slot의 연결 관계를 보존하기 위한 필드다.
   - 예:
-    "N4ABC12345 slot 3" -> lot_id="N4ABC12345", slot=3, lot_slot_id="N4ABC12345 slot 3"
-    "N4ABC12345_03" -> lot_id="N4ABC12345", slot=3, lot_slot_id="N4ABC12345_03"
+    "N4ABC12345 slot 3" -> lot_id="N4ABC12345", slot="3", lot_slot_id="N4ABC12345 slot 3"
+    "N4ABC12345_03" -> lot_id="N4ABC12345", slot="3", lot_slot_id="N4ABC12345_03"
 
   ER MAP Type 추출 규칙:
-  - "PRSTRIP", "prstrip", "PR STRIP", "피알스트립"이면 ermap_type=1
-  - "BEVEL", "bevel", "베벨"이면 ermap_type=2
+  - "PRSTRIP", "prstrip", "PR STRIP", "피알스트립"이면 ermap_type="1"
+  - "BEVEL", "bevel", "베벨"이면 ermap_type="2"
+  - ermap_type은 DB 조회에 맞춰 숫자가 아니라 문자열 "1" 또는 "2"로 추출한다.
   - 사용자가 PRSTRIP이나 BEVEL/베벨을 말하지 않으면 null로 둔다.
 
   Side Type 추출 규칙:
@@ -134,13 +136,13 @@ system_prompt: |-
     ]
   - "24일 EKE0104랑 4ABC1234 PRSTRIP 조회"
     -> tasks=[
-      {"eqp_id":"EKE0104","ermap_type":1,"start_date":"20260524","end_date":"20260524"},
-      {"eqp_id":"4ABC1234","ermap_type":1,"start_date":"20260524","end_date":"20260524"}
+      {"eqp_id":"EKE0104","ermap_type":"1","start_date":"20260524","end_date":"20260524"},
+      {"eqp_id":"4ABC1234","ermap_type":"1","start_date":"20260524","end_date":"20260524"}
     ]
   - "24일 EKE0104, 25일 N4ABC12345 베벨 조회"
     -> tasks=[
-      {"eqp_id":"EKE0104","ermap_type":2,"start_date":"20260524","end_date":"20260524"},
-      {"lot_id":"N4ABC12345","ermap_type":2,"start_date":"20260525","end_date":"20260525"}
+      {"eqp_id":"EKE0104","ermap_type":"2","start_date":"20260524","end_date":"20260524"},
+      {"lot_id":"N4ABC12345","ermap_type":"2","start_date":"20260525","end_date":"20260525"}
     ]
 
   현재 날짜:

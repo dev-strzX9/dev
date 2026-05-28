@@ -32,18 +32,18 @@ class ErmapTask(BaseModel):
         default=None,
         description="이 task의 Lot+Slot 표현. 예: N4ABC12345_03",
     )
-    slot: Optional[int] = Field(
+    slot: Optional[str] = Field(
         default=None,
-        description="단일 Wafer slot 번호. 예: slot 3, 3번 슬롯이면 3",
+        description="단일 Wafer slot 문자열. 예: slot 3, 3번 슬롯이면 '3'",
     )
     step: Optional[str] = Field(
         default=None,
         description="ER MAP 조회 대상 step. 사용자가 말한 step 값을 그대로 추출",
     )
-    ermap_type: Optional[int] = Field(
+    ermap_type: Optional[str] = Field(
         default=None,
         description=(
-            "ER MAP type. PRSTRIP이면 1, BEVEL 또는 베벨이면 2로 추출"
+            "ER MAP type 문자열. PRSTRIP이면 '1', BEVEL 또는 베벨이면 '2'로 추출"
         ),
     )
     side_type: Optional[Literal["front-side", "back-side"]] = Field(
