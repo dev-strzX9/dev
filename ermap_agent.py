@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, TypedDict
+from typing import Any, Dict, Literal, Optional, TypedDict
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -19,7 +19,12 @@ from pydantic import BaseModel, Field
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_LOOKBACK_HOURS = 24
-DATETIME_FORMAT = "%Y-%m-%d %H:%M"
+DATE_FORMAT = "%Y%m%d"
+SUPPORTED_NOW_FORMATS = (
+    DATE_FORMAT,
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d",
+)
 
 
 class ErmapEntities(BaseModel):
@@ -28,15 +33,15 @@ class ErmapEntities(BaseModel):
     eqp_id: Optional[str] = Field(
         default=None,
         description=(
-            "장비 ID. 숫자 1자리 + 알파벳 3~4글자 + 숫자 3~4자리 형식. "
-            "예: 4EKE0104"
+            "장비 ID. 숫자 1자리로 시작하거나 알파벳으로 시작하고, "
+            "알파벳 3~4글자 + 숫자 3~4자리 형식. 예: 4EKE0104, EKE0104"
         ),
     )
     chamber_id: Optional[str] = Field(
         default=None,
         description=(
             "챔버 ID. 장비 ID + '_' + 알파벳 1~2개 + 선택적 숫자 1개 형식. "
-            "맨 뒤 숫자가 있으면 1~8만 가능. 예: 4EKE0104_PM1, 4EKE0104_A, 4EKE0104_PM"
+            "맨 뒤 숫자가 있으면 1~8만 가능. 예: 4EKE0104_PM1, EKE0104_A"
         ),
     )
     lot_id: Optional[str] = Field(
@@ -65,17 +70,24 @@ class ErmapEntities(BaseModel):
         default=None,
         description="ER MAP type. 사용자가 type 1 또는 type 2처럼 말한 경우 숫자만 추출",
     )
+    side_type: Optional[Literal["front-side", "back-side"]] = Field(
+        default=None,
+        description=(
+            "ER MAP side type. front, front-side, 앞면이면 front-side. "
+            "back, back-side, 뒷면이면 back-side"
+        ),
+    )
     start_time: Optional[str] = Field(
         default=None,
         description=(
-            "사용자가 지정한 조회 시작 시간. 가능하면 YYYY-MM-DD HH:MM 형식으로 추출. "
+            "사용자가 지정한 조회 시작 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
             "사용자가 시간을 말하지 않으면 null"
         ),
     )
     end_time: Optional[str] = Field(
         default=None,
         description=(
-            "사용자가 지정한 조회 종료 시간. 가능하면 YYYY-MM-DD HH:MM 형식으로 추출. "
+            "사용자가 지정한 조회 종료 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
             "사용자가 시간을 말하지 않으면 null"
         ),
     )
@@ -90,7 +102,7 @@ class AgentState(TypedDict, total=False):
     message: str
 
 
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = r"""
 너는 반도체 ER MAP 조회 Agent의 1단계 엔티티 추출기다.
 
 목표:
@@ -108,22 +120,25 @@ SYSTEM_PROMPT = """
 5. slot
 6. step
 7. ermap_type
-8. start_time
-9. end_time
+8. side_type
+9. start_time
+10. end_time
 
 장비 ID 추출 규칙:
-- 장비 ID는 숫자 1자리 + 알파벳 3~4글자 + 숫자 3~4자리 형식이다.
+- 장비 ID는 숫자 1자리로 시작하거나 알파벳으로 시작할 수 있다.
+- 숫자로 시작하는 경우: 숫자 1자리 + 알파벳 3~4글자 + 숫자 3~4자리 형식이다.
+- 알파벳으로 시작하는 경우: 알파벳 3~4글자 + 숫자 3~4자리 형식이다.
 - 정규표현식 기준:
-  (?<![A-Z0-9_])\\d[A-Z]{3,4}\\d{3,4}(?![A-Z0-9_])
-- 예: 4EKE0104, 4ABC1234
+  (?<![A-Z0-9_])(?:\d[A-Z]{{3,4}}|[A-Z]{{3,4}})\d{{3,4}}(?![A-Z0-9_])
+- 예: 4EKE0104, 4ABC1234, EKE0104, ABC1234
 
 챔버 ID 추출 규칙:
 - 챔버 ID는 장비 ID + "_" + 알파벳 1~2개 + 선택적 숫자 1개 형식이다.
 - 맨 뒤 숫자가 있을 경우 반드시 1~8만 허용한다.
 - 정규표현식 기준:
-  (?<![A-Z0-9_])\\d[A-Z]{3,4}\\d{3,4}_[A-Z]{1,2}[1-8]?(?![A-Z0-9_])
-- 예: 4EKE0104_A, 4EKE0104_A1, 4EKE0104_PM, 4EKE0104_PM8
-- 4EKE0104_PM0, 4EKE0104_PM9, 4EKE0104_PM12는 챔버 ID로 보지 않는다.
+  (?<![A-Z0-9_])(?:\d[A-Z]{{3,4}}|[A-Z]{{3,4}})\d{{3,4}}_[A-Z]{{1,2}}[1-8]?(?![A-Z0-9_])
+- 예: 4EKE0104_A, 4EKE0104_PM8, EKE0104_A, ABC1234_PM1
+- 4EKE0104_PM0, EKE0104_PM9, ABC1234_PM12는 챔버 ID로 보지 않는다.
 - 챔버 ID가 있으면 chamber_id에 전체 값을 넣고, "_" 앞부분은 eqp_id로도 추출한다.
 
 Lot ID 추출 규칙:
@@ -132,17 +147,17 @@ Lot ID 추출 규칙:
 - 그 다음은 알파벳 대문자 3개이다.
 - 마지막은 숫자 5자리이다.
 - 일반 Lot 정규표현식 기준:
-  N[1456][A-Z]{3}\\d{5}
+  N[1456][A-Z]{{3}}\d{{5}}
 - 예: N1ABC12345, N4EKE12345, N5AAA00001, N6XYZ99999
 
 예외 Lot ID 규칙:
 - E1T로 시작하고 그 뒤에 숫자 4자리가 온다.
 - 예외 Lot 정규표현식 기준:
-  E1T\\d{4}
+  E1T\d{{4}}
 - 예: E1T1234, E1T0001
 
 최종 Lot ID 정규표현식:
-(?<![A-Z0-9_])(?:N[1456][A-Z]{3}\\d{5}|E1T\\d{4})(?![A-Z0-9_])
+(?<![A-Z0-9_])(?:N[1456][A-Z]{{3}}\d{{5}}|E1T\d{{4}})(?![A-Z0-9_])
 
 Lot + Slot 추출 규칙:
 - 사용자가 Lot ID와 slot 번호를 함께 말하면 lot_id와 slot을 각각 추출한다.
@@ -156,6 +171,11 @@ ER MAP Type 추출 규칙:
 - "type 2", "타입 2", "TYPE2"이면 ermap_type=2
 - 사용자가 type을 말하지 않으면 null로 둔다.
 
+Side Type 추출 규칙:
+- "front", "front-side", "front side", "앞면"이면 side_type="front-side"
+- "back", "back-side", "back side", "뒷면", "후면"이면 side_type="back-side"
+- 사용자가 side type을 말하지 않으면 null로 둔다.
+
 Step 추출 규칙:
 - 사용자가 step, 스텝, STEP과 함께 값을 말하면 step에 그대로 추출한다.
 - 예:
@@ -164,17 +184,17 @@ Step 추출 규칙:
 
 시간 추출 규칙:
 - 사용자가 명시한 조회 기간이 있으면 start_time, end_time을 추출한다.
-- 가능하면 YYYY-MM-DD HH:MM 형식으로 표준화한다.
+- 가능하면 YYYYMMDD 형식의 문자열로 표준화한다.
 - "오늘", "어제" 같은 상대 날짜는 현재 시간 정보를 기준으로 해석한다.
 - 사용자가 시간을 말하지 않으면 start_time, end_time은 null로 둔다.
 - 기본 시간값은 LLM이 만들지 않는다. 기본 시간은 코드에서 처리한다.
 
-현재 시간:
+현재 날짜:
 {now}
 
 중요:
 - 사용자가 말한 값만 추출한다.
-- 없는 장비 ID, Lot ID, Chamber ID, Slot, Step, Type을 만들지 않는다.
+- 없는 장비 ID, Lot ID, Chamber ID, Slot, Step, Type, Side Type을 만들지 않는다.
 - 애매하면 null로 둔다.
 """
 
@@ -196,17 +216,25 @@ def model_to_dict(model: BaseModel) -> Dict[str, Any]:
 
 
 def parse_datetime(value: Optional[str] = None) -> datetime:
-    """Parse a timestamp string or return the current local time."""
+    """Parse a supported date string or return the current local time."""
 
     if value is None:
         return datetime.now()
-    return datetime.strptime(value, DATETIME_FORMAT)
+
+    for date_format in SUPPORTED_NOW_FORMATS:
+        try:
+            return datetime.strptime(value, date_format)
+        except ValueError:
+            continue
+
+    formats = ", ".join(SUPPORTED_NOW_FORMATS)
+    raise ValueError(f"Unsupported now format: {value!r}. Expected one of: {formats}")
 
 
-def format_datetime(value: datetime) -> str:
-    """Format timestamps consistently for prompts and extracted entities."""
+def format_date(value: datetime) -> str:
+    """Format dates consistently for prompts and extracted entities."""
 
-    return value.strftime(DATETIME_FORMAT)
+    return value.strftime(DATE_FORMAT)
 
 
 def get_default_time_range(now: datetime) -> Dict[str, str]:
@@ -214,8 +242,8 @@ def get_default_time_range(now: datetime) -> Dict[str, str]:
 
     start = now - timedelta(hours=DEFAULT_LOOKBACK_HOURS)
     return {
-        "start_time": format_datetime(start),
-        "end_time": format_datetime(now),
+        "start_time": format_date(start),
+        "end_time": format_date(now),
     }
 
 
@@ -252,7 +280,7 @@ def extract_entities_node(state: AgentState) -> AgentState:
     """LangGraph node that extracts ER MAP entities from the user query."""
 
     now = parse_datetime(state.get("now"))
-    now_text = format_datetime(now)
+    now_text = format_date(now)
 
     parsed = entity_extract_chain.invoke(
         {
@@ -288,17 +316,17 @@ def run_examples() -> None:
     """Run a few manual examples for local verification."""
 
     test_queries = [
-        "4EKE0104_PM1 ER MAP 조회해줘",
-        "N4ABC12345 slot 3 type 1 이알맵 그려줘",
-        "4EKE0104_PM8 N6XYZ99999_03 step 12 type 2 오늘 8시부터 17시까지 ERMAP",
-        "E1T1234 슬롯 5 이알맵 조회",
+        "EKE0104_PM1 front-side ER MAP 조회해줘",
+        "N4ABC12345 slot 3 type 1 back-side 이알맵 그려줘",
+        "4EKE0104_PM8 N6XYZ99999_03 step 12 type 2 앞면 오늘 ERMAP",
+        "E1T1234 슬롯 5 후면 이알맵 조회",
     ]
 
     for query in test_queries:
         result = graph.invoke(
             {
                 "user_query": query,
-                "now": "2026-05-28 11:30",
+                "now": "20260528",
             }
         )
 
