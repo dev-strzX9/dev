@@ -13,8 +13,8 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 
-class ErmapEntities(BaseModel):
-    """Entities required for an ER MAP lookup."""
+class ErmapTask(BaseModel):
+    """One executable ER MAP lookup task."""
 
     eqp_ids: Optional[List[str]] = Field(
         default=None,
@@ -68,15 +68,27 @@ class ErmapEntities(BaseModel):
     start_date: Optional[str] = Field(
         default=None,
         description=(
-            "사용자가 지정한 조회 시작 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
+            "조회 시작 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
             "사용자가 날짜를 말하지 않으면 null"
         ),
     )
     end_date: Optional[str] = Field(
         default=None,
         description=(
-            "사용자가 지정한 조회 종료 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
+            "조회 종료 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
             "사용자가 날짜를 말하지 않으면 null"
+        ),
+    )
+
+
+class ErmapEntities(BaseModel):
+    """ER MAP lookup tasks extracted from a user query."""
+
+    tasks: List[ErmapTask] = Field(
+        default_factory=list,
+        description=(
+            "사용자 요청을 실행 가능한 조회 작업 단위로 나눈 목록. "
+            "단순 요청도 task 1개로 추출한다."
         ),
     )
 
@@ -91,7 +103,7 @@ class AgentState(TypedDict, total=False):
 
 
 def extract_entities_node(state: AgentState) -> AgentState:
-    """Extract ER MAP entities from the user query."""
+    """Extract ER MAP lookup tasks from the user query."""
 
     model = "gpt-4o-mini"
     default_lookback_days = 1
@@ -143,14 +155,25 @@ def extract_entities_node(state: AgentState) -> AgentState:
     else:
         entities = parsed.dict(exclude_none=True)
 
-    if not entities.get("start_date") and not entities.get("end_date"):
-        start_date = reference_date - timedelta(days=default_lookback_days)
-        entities.update(
-            {
-                "start_date": start_date.strftime(date_format),
-                "end_date": reference_date_text,
-            }
-        )
+    tasks = entities.get("tasks") or [{}]
+    for task in tasks:
+        start_date = task.get("start_date")
+        end_date = task.get("end_date")
+
+        if start_date and not end_date:
+            task["end_date"] = start_date
+        elif end_date and not start_date:
+            task["start_date"] = end_date
+        elif not start_date and not end_date:
+            default_start = reference_date - timedelta(days=default_lookback_days)
+            task.update(
+                {
+                    "start_date": default_start.strftime(date_format),
+                    "end_date": reference_date_text,
+                }
+            )
+
+    entities["tasks"] = tasks
 
     return {
         "reference_date": reference_date_text,
