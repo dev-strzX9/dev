@@ -14,34 +14,34 @@ from pydantic import BaseModel, Field
 
 
 class ErmapTask(BaseModel):
-    """One executable ER MAP lookup task."""
+    """One executable ER MAP lookup task with one date range."""
 
     eqp_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "장비 ID 목록. 숫자 1자리로 시작하거나 알파벳으로 시작하고, "
-            "알파벳 3~4글자 + 숫자 3~4자리 형식. 예: 4EKE0104, EKE0104"
+            "이 task의 같은 날짜 범위에 묶인 장비 ID 목록. "
+            "서로 다른 날짜의 장비는 다른 task로 분리. 예: 4EKE0104, EKE0104"
         ),
     )
     chamber_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "챔버 ID 목록. 장비 ID + '_' + 알파벳 1~2개 + 선택적 숫자 1개 형식. "
-            "맨 뒤 숫자가 있으면 1~8만 가능. 예: 4EKE0104_PM1, EKE0104_A"
+            "이 task의 같은 날짜 범위에 묶인 챔버 ID 목록. "
+            "서로 다른 날짜의 챔버는 다른 task로 분리. 예: 4EKE0104_PM1, EKE0104_A"
         ),
     )
     lot_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "Lot ID 목록. 일반 Lot은 N + 1/4/5/6 중 하나 + 알파벳 3개 + 숫자 5자리. "
-            "예외 Lot은 E1T + 숫자 4자리. 예: N4ABC12345, E1T1234"
+            "이 task의 같은 날짜 범위에 묶인 Lot ID 목록. "
+            "서로 다른 날짜의 Lot은 다른 task로 분리. 예: N4ABC12345, E1T1234"
         ),
     )
     lot_slot_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "Lot ID와 Slot이 함께 표현된 값 목록. 예: N4ABC12345_03, "
-            "N4ABC12345 slot 3"
+            "이 task의 같은 날짜 범위에 묶인 Lot+Slot 표현 목록. "
+            "서로 다른 날짜의 Lot+Slot은 다른 task로 분리. 예: N4ABC12345_03"
         ),
     )
     slot: Optional[int] = Field(
