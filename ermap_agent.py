@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Optional, TypedDict
 
 import yaml
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
-
-from ermap_client import OpenAIChatClient
 
 
 class ErmapEntities(BaseModel):
@@ -119,14 +119,14 @@ def extract_entities_node(state: AgentState) -> AgentState:
         reference_date_text,
     )
 
-    parsed = OpenAIChatClient().parse(
+    parsed = ChatOpenAI(
         model=model,
         temperature=0,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": state["user_query"]},
-        ],
-        response_model=ErmapEntities,
+    ).with_structured_output(ErmapEntities).invoke(
+        [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=state["user_query"]),
+        ]
     )
 
     if hasattr(parsed, "model_dump"):
