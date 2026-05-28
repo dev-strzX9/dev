@@ -16,33 +16,21 @@ from pydantic import BaseModel, Field
 class ErmapTask(BaseModel):
     """One executable ER MAP lookup task with one date range."""
 
-    eqp_ids: Optional[List[str]] = Field(
+    eqp_id: Optional[str] = Field(
         default=None,
-        description=(
-            "이 task의 같은 날짜 범위에 묶인 장비 ID 목록. "
-            "서로 다른 날짜의 장비는 다른 task로 분리. 예: 4EKE0104, EKE0104"
-        ),
+        description="이 task의 장비 ID. 여러 장비는 각각 다른 task로 분리",
     )
-    chamber_ids: Optional[List[str]] = Field(
+    chamber_id: Optional[str] = Field(
         default=None,
-        description=(
-            "이 task의 같은 날짜 범위에 묶인 챔버 ID 목록. "
-            "서로 다른 날짜의 챔버는 다른 task로 분리. 예: 4EKE0104_PM1, EKE0104_A"
-        ),
+        description="이 task의 챔버 ID. 여러 챔버는 각각 다른 task로 분리",
     )
-    lot_ids: Optional[List[str]] = Field(
+    lot_id: Optional[str] = Field(
         default=None,
-        description=(
-            "이 task의 같은 날짜 범위에 묶인 Lot ID 목록. "
-            "서로 다른 날짜의 Lot은 다른 task로 분리. 예: N4ABC12345, E1T1234"
-        ),
+        description="이 task의 Lot ID. 여러 Lot은 각각 다른 task로 분리",
     )
-    lot_slot_ids: Optional[List[str]] = Field(
+    lot_slot_id: Optional[str] = Field(
         default=None,
-        description=(
-            "이 task의 같은 날짜 범위에 묶인 Lot+Slot 표현 목록. "
-            "서로 다른 날짜의 Lot+Slot은 다른 task로 분리. 예: N4ABC12345_03"
-        ),
+        description="이 task의 Lot+Slot 표현. 예: N4ABC12345_03",
     )
     slot: Optional[int] = Field(
         default=None,
