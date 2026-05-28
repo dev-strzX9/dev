@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 
 DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_LOOKBACK_HOURS = 24
+DEFAULT_LOOKBACK_DAYS = 1
 DATE_FORMAT = "%Y%m%d"
 SUPPORTED_REFERENCE_DATE_FORMATS = (
     DATE_FORMAT,
@@ -77,18 +77,18 @@ class ErmapEntities(BaseModel):
             "back, back-side, 뒷면이면 back-side"
         ),
     )
-    start_time: Optional[str] = Field(
+    start_date: Optional[str] = Field(
         default=None,
         description=(
             "사용자가 지정한 조회 시작 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
-            "사용자가 시간을 말하지 않으면 null"
+            "사용자가 날짜를 말하지 않으면 null"
         ),
     )
-    end_time: Optional[str] = Field(
+    end_date: Optional[str] = Field(
         default=None,
         description=(
             "사용자가 지정한 조회 종료 날짜. 가능하면 YYYYMMDD 형식의 문자열로 추출. "
-            "사용자가 시간을 말하지 않으면 null"
+            "사용자가 날짜를 말하지 않으면 null"
         ),
     )
 
@@ -121,8 +121,8 @@ SYSTEM_PROMPT = r"""
 6. step
 7. ermap_type
 8. side_type
-9. start_time
-10. end_time
+9. start_date
+10. end_date
 
 장비 ID 추출 규칙:
 - 장비 ID는 숫자 1자리로 시작하거나 알파벳으로 시작할 수 있다.
@@ -182,12 +182,15 @@ Step 추출 규칙:
   "step 12" -> step="12"
   "스텝 MAIN" -> step="MAIN"
 
-시간 추출 규칙:
-- 사용자가 명시한 조회 기간이 있으면 start_time, end_time을 추출한다.
+날짜 추출 규칙:
+- 사용자가 명시한 조회 기간이 있으면 start_date, end_date를 추출한다.
 - 가능하면 YYYYMMDD 형식의 문자열로 표준화한다.
-- "오늘", "어제" 같은 상대 날짜는 현재 시간 정보를 기준으로 해석한다.
-- 사용자가 시간을 말하지 않으면 start_time, end_time은 null로 둔다.
-- 기본 시간값은 LLM이 만들지 않는다. 기본 시간은 코드에서 처리한다.
+- "오늘", "어제" 같은 상대 날짜는 현재 날짜 정보를 기준으로 해석한다.
+- "24일", "5월 24일", "2026년 5월 24일"처럼 특정 하루를 말하면
+  start_date와 end_date에 같은 YYYYMMDD 값을 넣는다.
+- "24일부터 26일까지"처럼 기간을 말하면 start_date는 시작일, end_date는 종료일로 추출한다.
+- 사용자가 날짜를 말하지 않으면 start_date, end_date는 null로 둔다.
+- 기본 날짜값은 LLM이 만들지 않는다. 기본 날짜는 코드에서 처리한다.
 
 현재 날짜:
 {reference_date}
@@ -239,28 +242,28 @@ def format_date(value: datetime) -> str:
     return value.strftime(DATE_FORMAT)
 
 
-def get_default_time_range(reference_date: datetime) -> Dict[str, str]:
-    """Return the default ER MAP lookup window."""
+def get_default_date_range(reference_date: datetime) -> Dict[str, str]:
+    """Return the default ER MAP lookup date range."""
 
-    start = reference_date - timedelta(hours=DEFAULT_LOOKBACK_HOURS)
+    start = reference_date - timedelta(days=DEFAULT_LOOKBACK_DAYS)
     return {
-        "start_time": format_date(start),
-        "end_time": format_date(reference_date),
+        "start_date": format_date(start),
+        "end_date": format_date(reference_date),
     }
 
 
-def apply_default_time_range(
+def apply_default_date_range(
     entities: Dict[str, Any],
     reference_date: datetime,
 ) -> Dict[str, Any]:
-    """Apply the default lookup window only when the user gave no time range."""
+    """Apply the default lookup date range only when the user gave no date range."""
 
-    if entities.get("start_time") or entities.get("end_time"):
+    if entities.get("start_date") or entities.get("end_date"):
         return entities
 
     return {
         **entities,
-        **get_default_time_range(reference_date),
+        **get_default_date_range(reference_date),
     }
 
 
@@ -292,7 +295,7 @@ def extract_entities_node(state: AgentState) -> AgentState:
     )
 
     entities = model_to_dict(parsed)
-    entities = apply_default_time_range(entities, reference_date)
+    entities = apply_default_date_range(entities, reference_date)
 
     return {
         "reference_date": reference_date_text,
