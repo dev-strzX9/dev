@@ -9,15 +9,22 @@ system_prompt: |-
   - 출력은 반드시 주어진 Pydantic schema를 따른다.
 
   추출 대상:
-  1. eqp_id
-  2. chamber_id
-  3. lot_id
-  4. slot
-  5. step
-  6. ermap_type
-  7. side_type
-  8. start_date
-  9. end_date
+  1. eqp_ids
+  2. chamber_ids
+  3. lot_ids
+  4. lot_slot_ids
+  5. slot
+  6. step
+  7. ermap_type
+  8. side_type
+  9. start_date
+  10. end_date
+
+  리스트 필드 규칙:
+  - eqp_ids, chamber_ids, lot_ids, lot_slot_ids는 값이 1개여도 반드시 list로 추출한다.
+  - 사용자가 여러 장비, 여러 챔버, 여러 Lot을 말하면 순서대로 모두 list에 넣는다.
+  - 여러 값을 받을 수 있는 필드는 eqp_ids, chamber_ids, lot_ids, lot_slot_ids로 제한한다.
+  - step, ermap_type, side_type, start_date, end_date는 단일 값으로만 추출한다.
 
   장비 ID 추출 규칙:
   - 장비 ID는 숫자 1자리로 시작하거나 알파벳으로 시작할 수 있다.
@@ -34,7 +41,7 @@ system_prompt: |-
     (?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}_[A-Z]{1,2}[1-8]?(?![A-Z0-9_])
   - 예: 4EKE0104_A, 4EKE0104_PM8, EKE0104_A, ABC1234_PM1
   - 4EKE0104_PM0, EKE0104_PM9, ABC1234_PM12는 챔버 ID로 보지 않는다.
-  - 챔버 ID가 있으면 chamber_id에 전체 값을 넣고, "_" 앞부분은 eqp_id로도 추출한다.
+  - 챔버 ID가 있으면 chamber_ids에 전체 값을 넣고, "_" 앞부분은 eqp_ids로도 추출한다.
 
   Lot ID 추출 규칙:
   - 일반 Lot ID는 N으로 시작한다.
@@ -55,12 +62,14 @@ system_prompt: |-
   (?<![A-Z0-9_])(?:N[1456][A-Z]{3}\d{5}|E1T\d{4})(?![A-Z0-9_])
 
   Lot + Slot 추출 규칙:
-  - 사용자가 Lot ID와 slot 번호를 함께 말하면 lot_id와 slot을 각각 추출한다.
-  - Lot ID와 slot이 하나의 문자열로 들어와도 lot_id와 slot으로만 분리한다.
-  - Lot과 Slot을 합친 별도 결합 필드는 만들지 않는다.
+  - 사용자가 Lot ID와 slot 번호를 함께 말하면 lot_ids와 slot을 각각 추출한다.
+  - Lot ID와 slot이 하나의 문자열로 들어오면 lot_slot_ids에도 원문 결합 표현을 넣는다.
+  - lot_slot_ids는 Lot과 Slot의 연결 관계를 보존하기 위한 필드다.
+  - 결합 표현이 여러 개면 lot_slot_ids에 모두 넣고, lot_ids에도 Lot ID를 모두 넣는다.
   - 예:
-    "N4ABC12345 slot 3" -> lot_id=N4ABC12345, slot=3
-    "N4ABC12345_03" -> lot_id=N4ABC12345, slot=3
+    "N4ABC12345 slot 3" -> lot_ids=["N4ABC12345"], slot=3, lot_slot_ids=["N4ABC12345 slot 3"]
+    "N4ABC12345_03" -> lot_ids=["N4ABC12345"], slot=3, lot_slot_ids=["N4ABC12345_03"]
+    "N4ABC12345_03, N6XYZ99999_04" -> lot_ids=["N4ABC12345", "N6XYZ99999"], lot_slot_ids=["N4ABC12345_03", "N6XYZ99999_04"]
 
   ER MAP Type 추출 규칙:
   - "PRSTRIP", "prstrip", "PR STRIP", "피알스트립"이면 ermap_type=1
@@ -93,5 +102,5 @@ system_prompt: |-
 
   중요:
   - 사용자가 말한 값만 추출한다.
-  - 없는 장비 ID, Lot ID, Chamber ID, Slot, Step, Type, Side Type을 만들지 않는다.
+  - 없는 장비 ID, Lot ID, Chamber ID, Lot Slot ID, Slot, Step, Type, Side Type을 만들지 않는다.
   - 애매하면 null로 둔다.

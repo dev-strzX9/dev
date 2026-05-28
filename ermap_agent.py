@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, TypedDict
+from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -16,30 +16,37 @@ from pydantic import BaseModel, Field
 class ErmapEntities(BaseModel):
     """Entities required for an ER MAP lookup."""
 
-    eqp_id: Optional[str] = Field(
+    eqp_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "장비 ID. 숫자 1자리로 시작하거나 알파벳으로 시작하고, "
+            "장비 ID 목록. 숫자 1자리로 시작하거나 알파벳으로 시작하고, "
             "알파벳 3~4글자 + 숫자 3~4자리 형식. 예: 4EKE0104, EKE0104"
         ),
     )
-    chamber_id: Optional[str] = Field(
+    chamber_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "챔버 ID. 장비 ID + '_' + 알파벳 1~2개 + 선택적 숫자 1개 형식. "
+            "챔버 ID 목록. 장비 ID + '_' + 알파벳 1~2개 + 선택적 숫자 1개 형식. "
             "맨 뒤 숫자가 있으면 1~8만 가능. 예: 4EKE0104_PM1, EKE0104_A"
         ),
     )
-    lot_id: Optional[str] = Field(
+    lot_ids: Optional[List[str]] = Field(
         default=None,
         description=(
-            "Lot ID. 일반 Lot은 N + 1/4/5/6 중 하나 + 알파벳 3개 + 숫자 5자리. "
+            "Lot ID 목록. 일반 Lot은 N + 1/4/5/6 중 하나 + 알파벳 3개 + 숫자 5자리. "
             "예외 Lot은 E1T + 숫자 4자리. 예: N4ABC12345, E1T1234"
+        ),
+    )
+    lot_slot_ids: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Lot ID와 Slot이 함께 표현된 값 목록. 예: N4ABC12345_03, "
+            "N4ABC12345 slot 3"
         ),
     )
     slot: Optional[int] = Field(
         default=None,
-        description="Wafer slot 번호. 예: slot 3, 3번 슬롯, N4ABC12345_03이면 3",
+        description="단일 Wafer slot 번호. 예: slot 3, 3번 슬롯이면 3",
     )
     step: Optional[str] = Field(
         default=None,
