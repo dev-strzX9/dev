@@ -11,20 +11,9 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, Literal, Optional, TypedDict
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
+from openai import OpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
-
-
-DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_LOOKBACK_DAYS = 1
-DATE_FORMAT = "%Y%m%d"
-REFERENCE_DATE_FORMATS = (
-    DATE_FORMAT,
-    "%Y-%m-%d %H:%M",
-    "%Y-%m-%d",
-)
 
 
 class ErmapEntities(BaseModel):
@@ -195,45 +184,56 @@ Step 추출 규칙:
 """
 
 
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", SYSTEM_PROMPT),
-        ("human", "{user_query}"),
-    ]
-)
-
-
 def extract_entities_node(state: AgentState) -> AgentState:
     """Extract ER MAP entities from the user query."""
 
+    model = "gpt-4o-mini"
+    default_lookback_days = 1
+    date_format = "%Y%m%d"
+    reference_date_formats = (
+        date_format,
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+    )
+
     reference_date = datetime.now()
     if state.get("reference_date"):
-        for date_format in REFERENCE_DATE_FORMATS:
+        for candidate_format in reference_date_formats:
             try:
-                reference_date = datetime.strptime(state["reference_date"], date_format)
+                reference_date = datetime.strptime(
+                    state["reference_date"],
+                    candidate_format,
+                )
                 break
             except ValueError:
                 continue
         else:
-            formats = ", ".join(REFERENCE_DATE_FORMATS)
+            formats = ", ".join(reference_date_formats)
             raise ValueError(
                 "Unsupported reference_date format: "
                 f"{state['reference_date']!r}. Expected one of: {formats}"
             )
 
-    reference_date_text = reference_date.strftime(DATE_FORMAT)
-    structured_llm = ChatOpenAI(
-        model=DEFAULT_MODEL,
+    reference_date_text = reference_date.strftime(date_format)
+    completion = OpenAI(api_key=os.getenv("OPENAI_API_KEY")).beta.chat.completions.parse(
+        model=model,
         temperature=0,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    ).with_structured_output(ErmapEntities)
-
-    parsed = (prompt | structured_llm).invoke(
-        {
-            "user_query": state["user_query"],
-            "reference_date": reference_date_text,
-        }
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT.replace(
+                    "{reference_date}",
+                    reference_date_text,
+                ),
+            },
+            {"role": "user", "content": state["user_query"]},
+        ],
+        response_format=ErmapEntities,
     )
+
+    parsed = completion.choices[0].message.parsed
+    if parsed is None:
+        raise ValueError("OpenAI response did not match ErmapEntities schema")
 
     if hasattr(parsed, "model_dump"):
         entities = parsed.model_dump(exclude_none=True)
@@ -241,10 +241,10 @@ def extract_entities_node(state: AgentState) -> AgentState:
         entities = parsed.dict(exclude_none=True)
 
     if not entities.get("start_date") and not entities.get("end_date"):
-        start_date = reference_date - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        start_date = reference_date - timedelta(days=default_lookback_days)
         entities.update(
             {
-                "start_date": start_date.strftime(DATE_FORMAT),
+                "start_date": start_date.strftime(date_format),
                 "end_date": reference_date_text,
             }
         )
@@ -263,23 +263,3 @@ workflow.add_edge("extract_entities", END)
 
 graph = workflow.compile()
 
-
-if __name__ == "__main__":
-    test_queries = [
-        "EKE0104_PM1 front-side ER MAP 조회해줘",
-        "N4ABC12345_03 type 1 back-side 이알맵 그려줘",
-        "4EKE0104_PM8 N6XYZ99999_03 step 12 type 2 앞면 24일 ERMAP",
-        "E1T1234 슬롯 5 후면 이알맵 조회",
-    ]
-
-    for query in test_queries:
-        result = graph.invoke(
-            {
-                "user_query": query,
-                "reference_date": "20260528",
-            }
-        )
-
-        print("=" * 80)
-        print("QUERY:", query)
-        print(result["extracted_entities"])
