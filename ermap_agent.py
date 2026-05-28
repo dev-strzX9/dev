@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_LOOKBACK_DAYS = 1
 DATE_FORMAT = "%Y%m%d"
-SUPPORTED_REFERENCE_DATE_FORMATS = (
+REFERENCE_DATE_FORMATS = (
     DATE_FORMAT,
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d",
@@ -51,16 +51,9 @@ class ErmapEntities(BaseModel):
             "예외 Lot은 E1T + 숫자 4자리. 예: N4ABC12345, E1T1234"
         ),
     )
-    lot_slot_id: Optional[str] = Field(
-        default=None,
-        description=(
-            "Lot ID와 Slot이 함께 표현된 값. 예: N4ABC12345_03, N4ABC12345 slot 3. "
-            "사용자가 Lot과 Slot을 함께 말한 경우 전체 표현을 추출"
-        ),
-    )
     slot: Optional[int] = Field(
         default=None,
-        description="Wafer slot 번호. 예: slot 3, 3번 슬롯이면 3",
+        description="Wafer slot 번호. 예: slot 3, 3번 슬롯, N4ABC12345_03이면 3",
     )
     step: Optional[str] = Field(
         default=None,
@@ -116,13 +109,12 @@ SYSTEM_PROMPT = r"""
 1. eqp_id
 2. chamber_id
 3. lot_id
-4. lot_slot_id
-5. slot
-6. step
-7. ermap_type
-8. side_type
-9. start_date
-10. end_date
+4. slot
+5. step
+6. ermap_type
+7. side_type
+8. start_date
+9. end_date
 
 장비 ID 추출 규칙:
 - 장비 ID는 숫자 1자리로 시작하거나 알파벳으로 시작할 수 있다.
@@ -161,10 +153,11 @@ Lot ID 추출 규칙:
 
 Lot + Slot 추출 규칙:
 - 사용자가 Lot ID와 slot 번호를 함께 말하면 lot_id와 slot을 각각 추출한다.
-- 사용자가 하나의 문자열로 Lot+Slot을 말하면 lot_slot_id에도 전체 표현을 넣는다.
+- Lot ID와 slot이 하나의 문자열로 들어와도 lot_id와 slot으로만 분리한다.
+- Lot과 Slot을 합친 별도 결합 필드는 만들지 않는다.
 - 예:
-  "N4ABC12345 slot 3" -> lot_id=N4ABC12345, slot=3, lot_slot_id="N4ABC12345 slot 3"
-  "N4ABC12345_03" -> lot_id=N4ABC12345, slot=3, lot_slot_id="N4ABC12345_03"
+  "N4ABC12345 slot 3" -> lot_id=N4ABC12345, slot=3
+  "N4ABC12345_03" -> lot_id=N4ABC12345, slot=3
 
 ER MAP Type 추출 규칙:
 - "type 1", "타입 1", "TYPE1"이면 ermap_type=1
@@ -210,92 +203,51 @@ prompt = ChatPromptTemplate.from_messages(
 )
 
 
-def model_to_dict(model: BaseModel) -> Dict[str, Any]:
-    """Convert a Pydantic v1/v2 model to a dict without null values."""
+def extract_entities_node(state: AgentState) -> AgentState:
+    """Extract ER MAP entities from the user query."""
 
-    if hasattr(model, "model_dump"):
-        return model.model_dump(exclude_none=True)
-    return model.dict(exclude_none=True)
+    reference_date = datetime.now()
+    if state.get("reference_date"):
+        for date_format in REFERENCE_DATE_FORMATS:
+            try:
+                reference_date = datetime.strptime(state["reference_date"], date_format)
+                break
+            except ValueError:
+                continue
+        else:
+            formats = ", ".join(REFERENCE_DATE_FORMATS)
+            raise ValueError(
+                "Unsupported reference_date format: "
+                f"{state['reference_date']!r}. Expected one of: {formats}"
+            )
 
-
-def parse_reference_date(value: Optional[str] = None) -> datetime:
-    """Parse a supported reference date or return the current local date."""
-
-    if value is None:
-        return datetime.now()
-
-    for date_format in SUPPORTED_REFERENCE_DATE_FORMATS:
-        try:
-            return datetime.strptime(value, date_format)
-        except ValueError:
-            continue
-
-    formats = ", ".join(SUPPORTED_REFERENCE_DATE_FORMATS)
-    raise ValueError(
-        f"Unsupported reference_date format: {value!r}. Expected one of: {formats}"
-    )
-
-
-def format_date(value: datetime) -> str:
-    """Format dates consistently for prompts and extracted entities."""
-
-    return value.strftime(DATE_FORMAT)
-
-
-def get_default_date_range(reference_date: datetime) -> Dict[str, str]:
-    """Return the default ER MAP lookup date range."""
-
-    start = reference_date - timedelta(days=DEFAULT_LOOKBACK_DAYS)
-    return {
-        "start_date": format_date(start),
-        "end_date": format_date(reference_date),
-    }
-
-
-def apply_default_date_range(
-    entities: Dict[str, Any],
-    reference_date: datetime,
-) -> Dict[str, Any]:
-    """Apply the default lookup date range only when the user gave no date range."""
-
-    if entities.get("start_date") or entities.get("end_date"):
-        return entities
-
-    return {
-        **entities,
-        **get_default_date_range(reference_date),
-    }
-
-
-def build_entity_extract_chain(model_name: str = DEFAULT_MODEL):
-    """Build the structured-output LangChain runnable."""
-
-    llm = ChatOpenAI(
-        model=model_name,
+    reference_date_text = reference_date.strftime(DATE_FORMAT)
+    structured_llm = ChatOpenAI(
+        model=DEFAULT_MODEL,
         temperature=0,
         api_key=os.getenv("OPENAI_API_KEY"),
-    )
-    return prompt | llm.with_structured_output(ErmapEntities)
+    ).with_structured_output(ErmapEntities)
 
-
-entity_extract_chain = build_entity_extract_chain()
-
-
-def extract_entities_node(state: AgentState) -> AgentState:
-    """LangGraph node that extracts ER MAP entities from the user query."""
-
-    reference_date = parse_reference_date(state.get("reference_date"))
-    reference_date_text = format_date(reference_date)
-
-    parsed = entity_extract_chain.invoke(
+    parsed = (prompt | structured_llm).invoke(
         {
             "user_query": state["user_query"],
             "reference_date": reference_date_text,
         }
     )
 
-    entities = model_to_dict(parsed)
-    entities = apply_default_date_range(entities, reference_date)
+    if hasattr(parsed, "model_dump"):
+        entities = parsed.model_dump(exclude_none=True)
+    else:
+        entities = parsed.dict(exclude_none=True)
+
+    if not entities.get("start_date") and not entities.get("end_date"):
+        start_date = reference_date - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        entities.update(
+            {
+                "start_date": start_date.strftime(DATE_FORMAT),
+                "end_date": reference_date_text,
+            }
+        )
 
     return {
         "reference_date": reference_date_text,
@@ -304,26 +256,19 @@ def extract_entities_node(state: AgentState) -> AgentState:
     }
 
 
-def build_graph():
-    """Compile the ER MAP entity extraction graph."""
+workflow = StateGraph(AgentState)
+workflow.add_node("extract_entities", extract_entities_node)
+workflow.add_edge(START, "extract_entities")
+workflow.add_edge("extract_entities", END)
 
-    workflow = StateGraph(AgentState)
-    workflow.add_node("extract_entities", extract_entities_node)
-    workflow.add_edge(START, "extract_entities")
-    workflow.add_edge("extract_entities", END)
-    return workflow.compile()
+graph = workflow.compile()
 
 
-graph = build_graph()
-
-
-def run_examples() -> None:
-    """Run a few manual examples for local verification."""
-
+if __name__ == "__main__":
     test_queries = [
         "EKE0104_PM1 front-side ER MAP 조회해줘",
-        "N4ABC12345 slot 3 type 1 back-side 이알맵 그려줘",
-        "4EKE0104_PM8 N6XYZ99999_03 step 12 type 2 앞면 오늘 ERMAP",
+        "N4ABC12345_03 type 1 back-side 이알맵 그려줘",
+        "4EKE0104_PM8 N6XYZ99999_03 step 12 type 2 앞면 24일 ERMAP",
         "E1T1234 슬롯 5 후면 이알맵 조회",
     ]
 
@@ -338,7 +283,3 @@ def run_examples() -> None:
         print("=" * 80)
         print("QUERY:", query)
         print(result["extracted_entities"])
-
-
-if __name__ == "__main__":
-    run_examples()
