@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_LOOKBACK_HOURS = 24
 DATE_FORMAT = "%Y%m%d"
-SUPPORTED_NOW_FORMATS = (
+SUPPORTED_REFERENCE_DATE_FORMATS = (
     DATE_FORMAT,
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d",
@@ -97,7 +97,7 @@ class AgentState(TypedDict, total=False):
     """LangGraph state shared across ER MAP extraction nodes."""
 
     user_query: str
-    now: str
+    reference_date: str
     extracted_entities: Dict[str, Any]
     message: str
 
@@ -190,7 +190,7 @@ Step 추출 규칙:
 - 기본 시간값은 LLM이 만들지 않는다. 기본 시간은 코드에서 처리한다.
 
 현재 날짜:
-{now}
+{reference_date}
 
 중요:
 - 사용자가 말한 값만 추출한다.
@@ -215,20 +215,22 @@ def model_to_dict(model: BaseModel) -> Dict[str, Any]:
     return model.dict(exclude_none=True)
 
 
-def parse_datetime(value: Optional[str] = None) -> datetime:
-    """Parse a supported date string or return the current local time."""
+def parse_reference_date(value: Optional[str] = None) -> datetime:
+    """Parse a supported reference date or return the current local date."""
 
     if value is None:
         return datetime.now()
 
-    for date_format in SUPPORTED_NOW_FORMATS:
+    for date_format in SUPPORTED_REFERENCE_DATE_FORMATS:
         try:
             return datetime.strptime(value, date_format)
         except ValueError:
             continue
 
-    formats = ", ".join(SUPPORTED_NOW_FORMATS)
-    raise ValueError(f"Unsupported now format: {value!r}. Expected one of: {formats}")
+    formats = ", ".join(SUPPORTED_REFERENCE_DATE_FORMATS)
+    raise ValueError(
+        f"Unsupported reference_date format: {value!r}. Expected one of: {formats}"
+    )
 
 
 def format_date(value: datetime) -> str:
@@ -237,19 +239,19 @@ def format_date(value: datetime) -> str:
     return value.strftime(DATE_FORMAT)
 
 
-def get_default_time_range(now: datetime) -> Dict[str, str]:
+def get_default_time_range(reference_date: datetime) -> Dict[str, str]:
     """Return the default ER MAP lookup window."""
 
-    start = now - timedelta(hours=DEFAULT_LOOKBACK_HOURS)
+    start = reference_date - timedelta(hours=DEFAULT_LOOKBACK_HOURS)
     return {
         "start_time": format_date(start),
-        "end_time": format_date(now),
+        "end_time": format_date(reference_date),
     }
 
 
 def apply_default_time_range(
     entities: Dict[str, Any],
-    now: datetime,
+    reference_date: datetime,
 ) -> Dict[str, Any]:
     """Apply the default lookup window only when the user gave no time range."""
 
@@ -258,7 +260,7 @@ def apply_default_time_range(
 
     return {
         **entities,
-        **get_default_time_range(now),
+        **get_default_time_range(reference_date),
     }
 
 
@@ -279,21 +281,21 @@ entity_extract_chain = build_entity_extract_chain()
 def extract_entities_node(state: AgentState) -> AgentState:
     """LangGraph node that extracts ER MAP entities from the user query."""
 
-    now = parse_datetime(state.get("now"))
-    now_text = format_date(now)
+    reference_date = parse_reference_date(state.get("reference_date"))
+    reference_date_text = format_date(reference_date)
 
     parsed = entity_extract_chain.invoke(
         {
             "user_query": state["user_query"],
-            "now": now_text,
+            "reference_date": reference_date_text,
         }
     )
 
     entities = model_to_dict(parsed)
-    entities = apply_default_time_range(entities, now)
+    entities = apply_default_time_range(entities, reference_date)
 
     return {
-        "now": now_text,
+        "reference_date": reference_date_text,
         "extracted_entities": entities,
         "message": "ER MAP 엔티티 추출 완료",
     }
@@ -326,7 +328,7 @@ def run_examples() -> None:
         result = graph.invoke(
             {
                 "user_query": query,
-                "now": "20260528",
+                "reference_date": "20260528",
             }
         )
 
