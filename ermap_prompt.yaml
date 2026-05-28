@@ -63,11 +63,9 @@ system_prompt: |-
     "N4ABC12345_03" -> lot_id=N4ABC12345, slot=3
 
   ER MAP Type 추출 규칙:
-  - TYPE1은 PRSTRIP을 의미하고, ermap_type=1로 추출한다.
-  - TYPE2는 BEVEL을 의미하고, ermap_type=2로 추출한다.
-  - "type 1", "타입 1", "TYPE1", "PRSTRIP"이면 ermap_type=1
-  - "type 2", "타입 2", "TYPE2", "BEVEL"이면 ermap_type=2
-  - 사용자가 type이나 PRSTRIP/BEVEL을 말하지 않으면 null로 둔다.
+  - "PRSTRIP", "prstrip", "PR STRIP", "피알스트립"이면 ermap_type=1
+  - "BEVEL", "bevel", "베벨"이면 ermap_type=2
+  - 사용자가 PRSTRIP이나 BEVEL/베벨을 말하지 않으면 null로 둔다.
 
   Side Type 추출 규칙:
   - "front", "front-side", "front side", "앞면"이면 side_type="front-side"

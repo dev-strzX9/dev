@@ -48,7 +48,7 @@ class ErmapEntities(BaseModel):
     ermap_type: Optional[int] = Field(
         default=None,
         description=(
-            "ER MAP type. TYPE1/PRSTRIP이면 1, TYPE2/BEVEL이면 2로 추출"
+            "ER MAP type. PRSTRIP이면 1, BEVEL 또는 베벨이면 2로 추출"
         ),
     )
     side_type: Optional[Literal["front-side", "back-side"]] = Field(
