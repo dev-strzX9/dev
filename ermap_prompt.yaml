@@ -12,8 +12,8 @@ system_prompt: |-
   - ermap_type은 JSON 문자열 "1" 또는 "2"만 사용한다. 숫자 1, 2는 쓰지 않는다.
   - side_type은 JSON 문자열 "front-side" 또는 "back-side"만 사용한다.
     (사용자가 FRONT, front, 앞면이라고 해도 출력은 front-side / back-side)
-  - slot은 JSON 문자열만 사용한다. 예: "3"
-  - eqp_id, chamber_id, lot_id는 가능하면 대문자로 출력한다.
+  - slot은 JSON 문자열만 사용하며 선행 0 없이 쓴다. 예: "3" (금지: "03")
+  - eqp_id, chamber_id, lot_id, lot_slot_id는 가능하면 대문자로 출력한다.
 
   최상위 출력 규칙:
   - 출력은 항상 tasks 리스트를 가진다.
@@ -95,13 +95,18 @@ system_prompt: |-
   (?<![A-Z0-9_])(?:N[1456][A-Z]{3}\d{5}|E1T\d{4})(?![A-Z0-9_])
 
   Lot + Slot 추출 규칙:
-  - 사용자가 Lot ID와 slot 번호를 함께 말하면 lot_id와 slot을 각각 추출한다.
-  - slot은 DB 조회에 맞춰 숫자가 아니라 문자열로 추출한다. 예: slot 3 -> slot="3"
-  - Lot ID와 slot이 하나의 문자열로 들어오면 lot_slot_id에도 원문 결합 표현을 넣는다.
-  - lot_slot_id는 Lot과 Slot의 연결 관계를 보존하기 위한 필드다.
+  - 사용자가 Lot ID와 slot 번호를 함께 말하면 lot_id, slot, lot_slot_id를 각각 추출한다.
+  - slot은 DB 조회용 문자열이며, 선행 0을 붙이지 않는다.
+    - 올바름: slot="3"
+    - 잘못됨: slot="03"
+  - lot_slot_id 형식은 반드시 LOT_ID + "_" + slot(정수, 선행 0 없음)이다.
+    - 올바름: lot_slot_id="N4ABC12345_3"
+    - 잘못됨: lot_slot_id="N4ABC12345_03", lot_slot_id="N4ABC12345 slot 3"
+  - 사용자가 "N4ABC12345_03", "slot 03"처럼 03으로 말해도 출력은 slot="3", lot_slot_id="N4ABC12345_3"으로 정규화한다.
   - 예:
-    "N4ABC12345 slot 3" -> lot_id="N4ABC12345", slot="3", lot_slot_id="N4ABC12345 slot 3"
-    "N4ABC12345_03" -> lot_id="N4ABC12345", slot="3", lot_slot_id="N4ABC12345_03"
+    "N4ABC12345 slot 3" -> lot_id="N4ABC12345", slot="3", lot_slot_id="N4ABC12345_3"
+    "N4ABC12345_03" -> lot_id="N4ABC12345", slot="3", lot_slot_id="N4ABC12345_3"
+    "N4ABC12345_3" -> lot_id="N4ABC12345", slot="3", lot_slot_id="N4ABC12345_3"
 
   ER MAP Type 추출 규칙:
   - "PRSTRIP", "prstrip", "PR STRIP", "피알스트립"이면 ermap_type="1"

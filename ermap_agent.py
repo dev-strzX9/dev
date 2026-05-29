@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict, Union
@@ -10,7 +11,7 @@ import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 # Defaults — override via environment or caller if needed.
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -61,6 +62,66 @@ def _normalize_side_type(value: Any) -> Optional[str]:
     return _SIDE_ALIASES.get(key)
 
 
+def _normalize_slot_number(value: Any) -> Optional[str]:
+    """DB slot은 선행 0 없이 문자열. 예: 03 -> 3"""
+
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+def _normalize_lot_slot_id(value: Any) -> Optional[str]:
+    """lot_slot_id = LOT_ID + '_' + slot(정수, 선행 0 없음). 예: N4ABC12345_3"""
+
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    if not text:
+        return None
+
+    underscore_match = re.match(r"^(.+)_(\d+)$", text)
+    if underscore_match:
+        lot_part = underscore_match.group(1)
+        slot_part = str(int(underscore_match.group(2)))
+        return f"{lot_part}_{slot_part}"
+
+    spaced_match = re.match(r"^(.+?)\s+SLOT\s+(\d+)$", text, flags=re.IGNORECASE)
+    if spaced_match:
+        lot_part = spaced_match.group(1).strip().upper()
+        slot_part = str(int(spaced_match.group(2)))
+        return f"{lot_part}_{slot_part}"
+
+    return text
+
+
+def _coerce_lot_slot_fields(task: Dict[str, Any]) -> Dict[str, Any]:
+    """lot_id / slot / lot_slot_id를 DB 규칙(선행 0 없는 slot)으로 맞춘다."""
+
+    if task.get("slot") is not None:
+        task["slot"] = _normalize_slot_number(task["slot"])
+
+    if task.get("lot_slot_id") is not None:
+        task["lot_slot_id"] = _normalize_lot_slot_id(task["lot_slot_id"])
+        match = re.match(r"^(.+)_(\d+)$", task["lot_slot_id"])
+        if match:
+            if not task.get("lot_id"):
+                task["lot_id"] = match.group(1)
+            if not task.get("slot"):
+                task["slot"] = match.group(2)
+
+    lot_id = task.get("lot_id")
+    slot = task.get("slot")
+    if lot_id and slot and not task.get("lot_slot_id"):
+        task["lot_slot_id"] = f"{lot_id}_{slot}"
+
+    return task
+
+
 class ErmapTask(BaseModel):
     """One executable ER MAP lookup task with one date range."""
 
@@ -78,7 +139,7 @@ class ErmapTask(BaseModel):
     )
     lot_slot_id: Optional[str] = Field(
         default=None,
-        description="이 task의 Lot+Slot 표현. 예: N4ABC12345_03",
+        description="Lot+Slot 결합 ID. 형식: LOT_ID_SLOT (slot 선행 0 없음). 예: N4ABC12345_3",
     )
     slot: Optional[str] = Field(
         default=None,
@@ -105,7 +166,7 @@ class ErmapTask(BaseModel):
         description="조회 종료 YYYYMMDD. 없으면 null",
     )
 
-    @field_validator("eqp_id", "chamber_id", "lot_id", "lot_slot_id", "step", mode="before")
+    @field_validator("eqp_id", "chamber_id", "lot_id", "step", mode="before")
     @classmethod
     def _strip_upper_ids(cls, value: Any) -> Any:
         if isinstance(value, str):
@@ -113,12 +174,15 @@ class ErmapTask(BaseModel):
             return cleaned.upper() if cleaned else value
         return value
 
+    @field_validator("lot_slot_id", mode="before")
+    @classmethod
+    def _normalize_lot_slot_id_field(cls, value: Any) -> Any:
+        return _normalize_lot_slot_id(value)
+
     @field_validator("slot", mode="before")
     @classmethod
     def _normalize_slot(cls, value: Any) -> Any:
-        if value is None:
-            return None
-        return str(value).strip()
+        return _normalize_slot_number(value)
 
     @field_validator("ermap_type", mode="before")
     @classmethod
@@ -129,6 +193,13 @@ class ErmapTask(BaseModel):
     @classmethod
     def _normalize_side_type_field(cls, value: Any) -> Any:
         return _normalize_side_type(value)
+
+    @model_validator(mode="after")
+    def _sync_lot_slot_fields(self) -> "ErmapTask":
+        synced = _coerce_lot_slot_fields(self.model_dump())
+        for key in ("lot_id", "slot", "lot_slot_id"):
+            object.__setattr__(self, key, synced.get(key))
+        return self
 
 
 class ErmapEntities(BaseModel):
@@ -189,6 +260,7 @@ def _apply_default_dates(
 def _safe_task_dict(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
+    raw = _coerce_lot_slot_fields(dict(raw))
     try:
         return ErmapTask.model_validate(raw).model_dump(exclude_none=True)
     except ValidationError:
@@ -208,7 +280,10 @@ def _safe_task_dict(raw: Any) -> Dict[str, Any]:
 
 
 def _tasks_to_dicts(parsed: ErmapEntities) -> List[Dict[str, Any]]:
-    return [task.model_dump(exclude_none=True) for task in parsed.tasks]
+    return [
+        _coerce_lot_slot_fields(task.model_dump(exclude_none=True))
+        for task in parsed.tasks
+    ]
 
 
 def _build_state_update(
