@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Dict, List, Optional, TypedDict, Union
 
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 # Defaults — override via environment or caller if needed.
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -45,6 +45,22 @@ _ERMAP_TYPE_ALIASES = {
 }
 
 
+def _normalize_ermap_type(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    key = str(value).strip().lower()
+    if key.isdigit() and key in ("1", "2"):
+        return key
+    return _ERMAP_TYPE_ALIASES.get(key)
+
+
+def _normalize_side_type(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    key = str(value).strip().lower().replace(" ", "-")
+    return _SIDE_ALIASES.get(key)
+
+
 class ErmapTask(BaseModel):
     """One executable ER MAP lookup task with one date range."""
 
@@ -64,7 +80,7 @@ class ErmapTask(BaseModel):
         default=None,
         description="이 task의 Lot+Slot 표현. 예: N4ABC12345_03",
     )
-    slot: Optional[Union[str, int]] = Field(
+    slot: Optional[str] = Field(
         default=None,
         description="단일 Wafer slot. 예: slot 3이면 '3'",
     )
@@ -72,14 +88,13 @@ class ErmapTask(BaseModel):
         default=None,
         description="ER MAP 조회 대상 step",
     )
-    # Relaxed types for structured output — normalized after LLM response.
-    ermap_type: Optional[Union[str, int]] = Field(
+    ermap_type: Optional[str] = Field(
         default=None,
-        description="ER MAP type. PRSTRIP=1, BEVEL=2 (문자열 또는 숫자)",
+        description='ER MAP type 문자열 "1"(PRSTRIP) 또는 "2"(BEVEL)',
     )
     side_type: Optional[str] = Field(
         default=None,
-        description='front-side 또는 back-side (또는 front, FRONT, 앞면 등)',
+        description='front-side 또는 back-side',
     )
     start_date: Optional[str] = Field(
         default=None,
@@ -98,23 +113,22 @@ class ErmapTask(BaseModel):
             return cleaned.upper() if cleaned else value
         return value
 
-    @model_validator(mode="after")
-    def _normalize_fields(self) -> ErmapTask:
-        if self.slot is not None:
-            self.slot = str(self.slot).strip()
+    @field_validator("slot", mode="before")
+    @classmethod
+    def _normalize_slot(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        return str(value).strip()
 
-        if self.ermap_type is not None:
-            key = str(self.ermap_type).strip().lower()
-            if key.isdigit() and key in ("1", "2"):
-                self.ermap_type = key
-            else:
-                self.ermap_type = _ERMAP_TYPE_ALIASES.get(key)
+    @field_validator("ermap_type", mode="before")
+    @classmethod
+    def _normalize_ermap_type_field(cls, value: Any) -> Any:
+        return _normalize_ermap_type(value)
 
-        if self.side_type is not None:
-            key = str(self.side_type).strip().lower().replace(" ", "-")
-            self.side_type = _SIDE_ALIASES.get(key)
-
-        return self
+    @field_validator("side_type", mode="before")
+    @classmethod
+    def _normalize_side_type_field(cls, value: Any) -> Any:
+        return _normalize_side_type(value)
 
 
 class ErmapEntities(BaseModel):
@@ -172,11 +186,47 @@ def _apply_default_dates(
             task["end_date"] = reference_date_text
 
 
+def _safe_task_dict(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        return ErmapTask.model_validate(raw).model_dump(exclude_none=True)
+    except ValidationError:
+        coerced = dict(raw)
+        coerced["ermap_type"] = _normalize_ermap_type(coerced.get("ermap_type"))
+        coerced["side_type"] = _normalize_side_type(coerced.get("side_type"))
+        if coerced.get("slot") is not None:
+            coerced["slot"] = str(coerced["slot"]).strip()
+        try:
+            return ErmapTask.model_validate(coerced).model_dump(exclude_none=True)
+        except ValidationError:
+            return {
+                key: value
+                for key, value in coerced.items()
+                if value is not None and key in ErmapTask.model_fields
+            }
+
+
 def _tasks_to_dicts(parsed: ErmapEntities) -> List[Dict[str, Any]]:
     return [task.model_dump(exclude_none=True) for task in parsed.tasks]
 
 
-def extract_entities_node(state: AgentState) -> AgentState:
+def _build_state_update(
+    *,
+    reference_date_text: str,
+    tasks: List[Dict[str, Any]],
+    message: str,
+) -> Dict[str, Any]:
+    """LangGraph 노드는 반드시 dict를 반환해야 한다 (list/model 반환 시 InvalidUpdateError)."""
+
+    return {
+        "reference_date": reference_date_text,
+        "extracted_entities": {"tasks": tasks},
+        "message": message,
+    }
+
+
+def extract_entities_node(state: AgentState) -> Dict[str, Any]:
     """Extract ER MAP lookup tasks from the user query."""
 
     reference_date = _parse_reference_date(state.get("reference_date"))
@@ -210,28 +260,22 @@ def extract_entities_node(state: AgentState) -> AgentState:
         tasks = _tasks_to_dicts(parsed)
     elif hasattr(parsed, "model_dump"):
         raw_tasks = parsed.model_dump(exclude_none=True).get("tasks", [])
-        tasks = [
-            ErmapTask.model_validate(task).model_dump(exclude_none=True)
-            for task in raw_tasks
-        ]
+        tasks = [_safe_task_dict(task) for task in raw_tasks]
     else:
         raw_tasks = parsed.get("tasks", []) if isinstance(parsed, dict) else []
-        tasks = [
-            ErmapTask.model_validate(task).model_dump(exclude_none=True)
-            for task in raw_tasks
-        ]
+        tasks = [_safe_task_dict(task) for task in raw_tasks]
 
+    tasks = [task for task in tasks if task]
     if not tasks:
         tasks = [{}]
 
     _apply_default_dates(tasks, reference_date)
-    entities: Dict[str, Any] = {"tasks": tasks}
 
-    return {
-        "reference_date": reference_date_text,
-        "extracted_entities": entities,
-        "message": "ER MAP 엔티티 추출 완료",
-    }
+    return _build_state_update(
+        reference_date_text=reference_date_text,
+        tasks=tasks,
+        message="ER MAP 엔티티 추출 완료",
+    )
 
 
 workflow = StateGraph(AgentState)
