@@ -1,11 +1,11 @@
-"""ER MAP entity extraction agent (timeout / schema coercion fixes)."""
+"""ER MAP entity extraction agent (no side_type, ISO date output)."""
 
 from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypedDict, Union
+from typing import Any, Dict, List, Optional, TypedDict
 
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -13,27 +13,13 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-# Defaults — override via environment or caller if needed.
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_TIMEOUT_SEC = 60
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_LOOKBACK_DAYS = 1
-DATE_FORMAT = "%Y%m%d"
-REFERENCE_DATE_FORMATS = (DATE_FORMAT, "%Y-%m-%d %H:%M", "%Y-%m-%d")
-
-_SIDE_ALIASES = {
-    "front": "front-side",
-    "frontside": "front-side",
-    "front-side": "front-side",
-    "front_side": "front-side",
-    "앞면": "front-side",
-    "back": "back-side",
-    "backside": "back-side",
-    "back-side": "back-side",
-    "back_side": "back-side",
-    "뒷면": "back-side",
-    "후면": "back-side",
-}
+DATE_OUTPUT_FORMAT = "%Y-%m-%d"
+DATE_INPUT_FORMATS = ("%Y-%m-%d", "%Y%m%d", "%Y-%m-%d %H:%M", "%Y/%m/%d")
+REFERENCE_DATE_FORMATS = DATE_INPUT_FORMATS
 
 _ERMAP_TYPE_ALIASES = {
     "1": "1",
@@ -55,16 +41,24 @@ def _normalize_ermap_type(value: Any) -> Optional[str]:
     return _ERMAP_TYPE_ALIASES.get(key)
 
 
-def _normalize_side_type(value: Any) -> Optional[str]:
+def _normalize_date_string(value: Any) -> Optional[str]:
+    """Return dates as YYYY-MM-DD (e.g. 2024-03-24)."""
+
     if value is None:
         return None
-    key = str(value).strip().lower().replace(" ", "-")
-    return _SIDE_ALIASES.get(key)
+    text = str(value).strip()
+    if not text:
+        return None
+
+    for fmt in DATE_INPUT_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).strftime(DATE_OUTPUT_FORMAT)
+        except ValueError:
+            continue
+    return text
 
 
 def _normalize_slot_number(value: Any) -> Optional[str]:
-    """DB slot은 선행 0 없이 문자열. 예: 03 -> 3"""
-
     if value is None:
         return None
     text = str(value).strip()
@@ -76,8 +70,6 @@ def _normalize_slot_number(value: Any) -> Optional[str]:
 
 
 def _normalize_lot_slot_id(value: Any) -> Optional[str]:
-    """lot_slot_id = LOT_ID + '_' + slot(정수, 선행 0 없음). 예: N4ABC12345_3"""
-
     if value is None:
         return None
     text = str(value).strip().upper()
@@ -100,8 +92,6 @@ def _normalize_lot_slot_id(value: Any) -> Optional[str]:
 
 
 def _coerce_lot_slot_fields(task: Dict[str, Any]) -> Dict[str, Any]:
-    """lot_id / slot / lot_slot_id를 DB 규칙(선행 0 없는 slot)으로 맞춘다."""
-
     if task.get("slot") is not None:
         task["slot"] = _normalize_slot_number(task["slot"])
 
@@ -109,15 +99,17 @@ def _coerce_lot_slot_fields(task: Dict[str, Any]) -> Dict[str, Any]:
         task["lot_slot_id"] = _normalize_lot_slot_id(task["lot_slot_id"])
         match = re.match(r"^(.+)_(\d+)$", task["lot_slot_id"])
         if match:
-            if not task.get("lot_id"):
-                task["lot_id"] = match.group(1)
-            if not task.get("slot"):
-                task["slot"] = match.group(2)
+            task.setdefault("lot_id", match.group(1))
+            task.setdefault("slot", match.group(2))
 
     lot_id = task.get("lot_id")
     slot = task.get("slot")
     if lot_id and slot and not task.get("lot_slot_id"):
         task["lot_slot_id"] = f"{lot_id}_{slot}"
+
+    for key in ("start_date", "end_date"):
+        if task.get(key) is not None:
+            task[key] = _normalize_date_string(task[key])
 
     return task
 
@@ -125,45 +117,26 @@ def _coerce_lot_slot_fields(task: Dict[str, Any]) -> Dict[str, Any]:
 class ErmapTask(BaseModel):
     """One executable ER MAP lookup task with one date range."""
 
-    eqp_id: Optional[str] = Field(
-        default=None,
-        description="이 task의 장비 ID. 여러 장비는 각각 다른 task로 분리",
-    )
-    chamber_id: Optional[str] = Field(
-        default=None,
-        description="이 task의 챔버 ID. 여러 챔버는 각각 다른 task로 분리",
-    )
-    lot_id: Optional[str] = Field(
-        default=None,
-        description="이 task의 Lot ID. 여러 Lot은 각각 다른 task로 분리",
-    )
+    eqp_id: Optional[str] = Field(default=None, description="장비 ID (단일)")
+    chamber_id: Optional[str] = Field(default=None, description="챔버 ID (단일)")
+    lot_id: Optional[str] = Field(default=None, description="Lot ID (단일)")
     lot_slot_id: Optional[str] = Field(
         default=None,
-        description="Lot+Slot 결합 ID. 형식: LOT_ID_SLOT (slot 선행 0 없음). 예: N4ABC12345_3",
+        description="Lot+Slot 결합 ID. 예: N4ABC12345_3",
     )
-    slot: Optional[str] = Field(
-        default=None,
-        description="단일 Wafer slot. 예: slot 3이면 '3'",
-    )
-    step: Optional[str] = Field(
-        default=None,
-        description="ER MAP 조회 대상 step",
-    )
+    slot: Optional[str] = Field(default=None, description="Wafer slot 문자열. 예: 3")
+    step: Optional[str] = Field(default=None, description="step 값")
     ermap_type: Optional[str] = Field(
         default=None,
-        description='ER MAP type 문자열 "1"(PRSTRIP) 또는 "2"(BEVEL)',
-    )
-    side_type: Optional[str] = Field(
-        default=None,
-        description='front-side 또는 back-side',
+        description='ER MAP type "1"(PRSTRIP) 또는 "2"(BEVEL)',
     )
     start_date: Optional[str] = Field(
         default=None,
-        description="조회 시작 YYYYMMDD. 없으면 null",
+        description='조회 시작일 YYYY-MM-DD (예: "2024-03-24")',
     )
     end_date: Optional[str] = Field(
         default=None,
-        description="조회 종료 YYYYMMDD. 없으면 null",
+        description='조회 종료일 YYYY-MM-DD (예: "2024-03-24")',
     )
 
     @field_validator("eqp_id", "chamber_id", "lot_id", "step", mode="before")
@@ -181,7 +154,7 @@ class ErmapTask(BaseModel):
 
     @field_validator("slot", mode="before")
     @classmethod
-    def _normalize_slot(cls, value: Any) -> Any:
+    def _normalize_slot_field(cls, value: Any) -> Any:
         return _normalize_slot_number(value)
 
     @field_validator("ermap_type", mode="before")
@@ -189,31 +162,27 @@ class ErmapTask(BaseModel):
     def _normalize_ermap_type_field(cls, value: Any) -> Any:
         return _normalize_ermap_type(value)
 
-    @field_validator("side_type", mode="before")
+    @field_validator("start_date", "end_date", mode="before")
     @classmethod
-    def _normalize_side_type_field(cls, value: Any) -> Any:
-        return _normalize_side_type(value)
+    def _normalize_date_fields(cls, value: Any) -> Any:
+        return _normalize_date_string(value)
 
     @model_validator(mode="after")
-    def _sync_lot_slot_fields(self) -> "ErmapTask":
+    def _sync_lot_slot_fields(self) -> ErmapTask:
         synced = _coerce_lot_slot_fields(self.model_dump())
-        for key in ("lot_id", "slot", "lot_slot_id"):
+        for key in ("lot_id", "slot", "lot_slot_id", "start_date", "end_date"):
             object.__setattr__(self, key, synced.get(key))
         return self
 
 
 class ErmapEntities(BaseModel):
-    """ER MAP lookup tasks extracted from a user query."""
-
     tasks: List[ErmapTask] = Field(
         default_factory=list,
-        description="실행 가능한 조회 작업 목록. 단순 요청도 task 1개.",
+        description="실행 가능한 조회 task 목록",
     )
 
 
 class AgentState(TypedDict, total=False):
-    """LangGraph state shared across ER MAP extraction nodes."""
-
     user_query: str
     reference_date: str
     extracted_entities: Dict[str, Any]
@@ -226,7 +195,7 @@ def _parse_reference_date(raw: Optional[str]) -> datetime:
 
     for candidate_format in REFERENCE_DATE_FORMATS:
         try:
-            return datetime.strptime(raw, candidate_format)
+            return datetime.strptime(raw.strip(), candidate_format)
         except ValueError:
             continue
 
@@ -241,9 +210,17 @@ def _apply_default_dates(
     reference_date: datetime,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
 ) -> None:
-    reference_date_text = reference_date.strftime(DATE_FORMAT)
+    reference_date_text = reference_date.strftime(DATE_OUTPUT_FORMAT)
 
     for task in tasks:
+        start_date = task.get("start_date")
+        end_date = task.get("end_date")
+
+        if start_date:
+            task["start_date"] = _normalize_date_string(start_date)
+        if end_date:
+            task["end_date"] = _normalize_date_string(end_date)
+
         start_date = task.get("start_date")
         end_date = task.get("end_date")
 
@@ -253,7 +230,7 @@ def _apply_default_dates(
             task["start_date"] = end_date
         elif not start_date and not end_date:
             default_start = reference_date - timedelta(days=lookback_days)
-            task["start_date"] = default_start.strftime(DATE_FORMAT)
+            task["start_date"] = default_start.strftime(DATE_OUTPUT_FORMAT)
             task["end_date"] = reference_date_text
 
 
@@ -264,11 +241,8 @@ def _safe_task_dict(raw: Any) -> Dict[str, Any]:
     try:
         return ErmapTask.model_validate(raw).model_dump(exclude_none=True)
     except ValidationError:
-        coerced = dict(raw)
+        coerced = _coerce_lot_slot_fields(dict(raw))
         coerced["ermap_type"] = _normalize_ermap_type(coerced.get("ermap_type"))
-        coerced["side_type"] = _normalize_side_type(coerced.get("side_type"))
-        if coerced.get("slot") is not None:
-            coerced["slot"] = str(coerced["slot"]).strip()
         try:
             return ErmapTask.model_validate(coerced).model_dump(exclude_none=True)
         except ValidationError:
@@ -292,8 +266,6 @@ def _build_state_update(
     tasks: List[Dict[str, Any]],
     message: str,
 ) -> Dict[str, Any]:
-    """LangGraph 노드는 반드시 dict를 반환해야 한다 (list/model 반환 시 InvalidUpdateError)."""
-
     return {
         "reference_date": reference_date_text,
         "extracted_entities": {"tasks": tasks},
@@ -302,10 +274,8 @@ def _build_state_update(
 
 
 def extract_entities_node(state: AgentState) -> Dict[str, Any]:
-    """Extract ER MAP lookup tasks from the user query."""
-
     reference_date = _parse_reference_date(state.get("reference_date"))
-    reference_date_text = reference_date.strftime(DATE_FORMAT)
+    reference_date_text = reference_date.strftime(DATE_OUTPUT_FORMAT)
 
     prompt_path = Path(__file__).with_name("ermap_prompt.yaml")
     prompt_config = yaml.safe_load(prompt_path.read_text(encoding="utf-8"))
