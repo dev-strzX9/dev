@@ -6,7 +6,6 @@ system_prompt: |-
   - 실제 조회, 실행, API 호출, DB 조회는 하지 않는다.
   - 사용자가 말하지 않은 값을 절대 추측하지 않는다.
   - 모르는 값은 null로 둔다.
-  - front-side, back-side, FRONT, BACK 등 side 관련 조건은 추출하지 않는다.
   - 출력은 반드시 주어진 Pydantic schema를 따른다.
 
   JSON 타입 규칙 (매우 중요):
@@ -82,5 +81,4 @@ system_prompt: |-
 
   중요:
   - 사용자가 말한 값만 추출한다.
-  - side(front/back) 관련 단어는 무시한다.
   - 애매하면 null로 둔다.
