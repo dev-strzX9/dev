@@ -95,20 +95,58 @@ system_prompt: |-
   - Examples: "step 12" -> step="12", "스텝 MAIN" -> step="MAIN"
 
   Date rules:
-  - Output start_date and end_date as YYYY-MM-DD strings.
-  - Resolve relative dates (today/오늘, yesterday/어제) using reference date below.
-  - Single day ("24일", "May 24", "2026년 5월 24일") -> same YYYY-MM-DD in start_date and end_date.
-  - Ranges ("24일부터 26일까지") -> start_date = start, end_date = end.
-  - If user gives no date -> null (defaults are filled in code, not by you).
+  - Output start_date and end_date as YYYY-MM-DD strings only.
+  - Use the reference date below for all relative date math. Both bounds are inclusive.
+  - If the user gives no date or period at all -> start_date and end_date = null (code fills defaults; do not invent dates).
 
-  Examples:
-  - "EFG4803_PM1 BEVEL 조회"
+  Absolute / calendar day (single day):
+  - "24일", "the 24th", "May 24", "2026-05-24", "2026년 5월 24일"
+    -> start_date = end_date = that day as YYYY-MM-DD (infer month/year from reference date when omitted).
+
+  Explicit range (start and end stated):
+  - "24일부터 26일까지", "from May 24 to May 26", "5/24-5/26"
+    -> start_date = first day, end_date = last day (YYYY-MM-DD).
+
+  Relative single day:
+  - today / 오늘 -> start_date = end_date = reference date
+  - yesterday / 어제 -> start_date = end_date = reference date minus 1 day
+
+  Rolling windows (most common for "recent", "within", "during the last"):
+  - Count N calendar days inclusive ending on reference date:
+    start_date = reference date minus (N - 1) days, end_date = reference date
+  - last 3 days / 최근 3일 / 3일간 -> N=3
+  - last 7 days / past week / 일주일 / 일주일 동안 / 최근 일주일 / 7일간 -> N=7
+  - last 14 days / 2 weeks / 2주일 / 최근 2주 -> N=14
+  - last 30 days / one month / 한 달 / 한달 / 한달 내 / 한 달 내 / within a month / 최근 한달 / 30일간 -> N=30
+  - "최근 N일" / "last N days" -> use the stated N with the formula above.
+
+  Calendar month (only when user clearly means a calendar month):
+  - this month / 이번 달 / this month so far
+    -> start_date = first day of reference month, end_date = reference date
+  - last month / 지난달 / previous month
+    -> start_date = first day of previous calendar month,
+       end_date = last day of previous calendar month
+
+  Period + entity:
+  - If a period applies to the whole query, copy the same start_date/end_date to every task.
+  - If different periods attach to different entities, split tasks and attach dates per task.
+
+  Date examples (reference date = 2026-05-29):
+  - "EFG4803_PM1 BEVEL 조회" (no date)
     -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803","ermap_type":"2"}]
+  - "최근 일주일 EFG4803_PM1 BEVEL"
+    -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803","ermap_type":"2","start_date":"2026-05-23","end_date":"2026-05-29"}]
+  - "한달 내 진행된 N4ABC12345"
+    -> tasks=[{"lot_id":"N4ABC12345","start_date":"2026-04-30","end_date":"2026-05-29"}]
+  - "어제 EKE0104 조회"
+    -> tasks=[{"eqp_id":"EKE0104","start_date":"2026-05-28","end_date":"2026-05-28"}]
   - "24일 N4ABC12345, 25일 N6XYZ99999 조회"
     -> tasks=[
       {"lot_id":"N4ABC12345","start_date":"2026-05-24","end_date":"2026-05-24"},
       {"lot_id":"N6XYZ99999","start_date":"2026-05-25","end_date":"2026-05-25"}
     ]
+  - "이번 달 4EKE0104"
+    -> tasks=[{"eqp_id":"4EKE0104","start_date":"2026-05-01","end_date":"2026-05-29"}]
 
   Reference date (YYYY-MM-DD):
   {reference_date}
