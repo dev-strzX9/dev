@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, TypedDict
@@ -46,6 +47,8 @@ _ERMAP_TYPE_ALIASES = {
 Phase = Literal[
     "started",
     "extracted",
+    "validated",
+    "extraction_failed",
     "queried",
     "awaiting_selection",
     "selected",
@@ -53,6 +56,50 @@ Phase = Literal[
     "selection_failed",
     "completed",
 ]
+
+_CHAMBER_ID_RE = re.compile(
+    r"(?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}_[A-Z]{1,2}[1-8]?(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
+_EQP_ID_RE = re.compile(
+    r"(?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
+_LOT_ID_RE = re.compile(
+    r"(?<![A-Z0-9_])(?:N[1456][A-Z]{3}\d{5}|E1T\d{4})(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
+_LOT_SLOT_UNDERSCORE_RE = re.compile(
+    r"(?<![A-Z0-9_])((?:N[1456][A-Z]{3}\d{5}|E1T\d{4})_(\d+))(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
+_LOT_SLOT_SPACED_RE = re.compile(
+    r"(?<![A-Z0-9_])((?:N[1456][A-Z]{3}\d{5}|E1T\d{4})\s+SLOT\s+(\d+))",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class _QueryIdentifier:
+    kind: Literal["chamber", "eqp", "lot", "lot_slot"]
+    start: int
+    chamber_id: Optional[str] = None
+    eqp_id: Optional[str] = None
+    lot_id: Optional[str] = None
+    lot_slot_id: Optional[str] = None
+    slot: Optional[str] = None
+
+    def usage_keys(self) -> frozenset[str]:
+        keys: set[str] = set()
+        if self.chamber_id:
+            keys.add(f"chamber:{self.chamber_id}")
+        if self.eqp_id:
+            keys.add(f"eqp:{self.eqp_id}")
+        if self.lot_slot_id:
+            keys.add(f"lot_slot:{self.lot_slot_id}")
+        if self.lot_id:
+            keys.add(f"lot:{self.lot_id}")
+        return frozenset(keys)
 
 
 def _normalize_ermap_type(value: Any) -> Optional[str]:
@@ -307,6 +354,196 @@ def _first_task(state: AgentState) -> Dict[str, Any]:
     return tasks[0]
 
 
+def _task_has_query_identifier(task: Dict[str, Any]) -> bool:
+    """Task must have at least one of eqp_id, chamber_id, lot_id, or lot_slot_id."""
+
+    return bool(
+        task.get("eqp_id")
+        or task.get("chamber_id")
+        or task.get("lot_id")
+        or task.get("lot_slot_id")
+    )
+
+
+def _chamber_eqp_id(chamber_id: str) -> str:
+    return chamber_id.split("_", 1)[0].upper()
+
+
+def _collect_query_identifiers(query: str) -> List[_QueryIdentifier]:
+    text = query.upper()
+    identifiers: List[_QueryIdentifier] = []
+    chamber_spans: List[tuple[int, int]] = []
+
+    for match in _CHAMBER_ID_RE.finditer(text):
+        chamber_id = match.group(0).upper()
+        identifiers.append(
+            _QueryIdentifier(
+                kind="chamber",
+                start=match.start(),
+                chamber_id=chamber_id,
+                eqp_id=_chamber_eqp_id(chamber_id),
+            )
+        )
+        chamber_spans.append((match.start(), match.end()))
+
+    for match in _LOT_SLOT_UNDERSCORE_RE.finditer(text):
+        lot_id = match.group(1).split("_", 1)[0].upper()
+        slot = str(int(match.group(2)))
+        identifiers.append(
+            _QueryIdentifier(
+                kind="lot_slot",
+                start=match.start(),
+                lot_id=lot_id,
+                slot=slot,
+                lot_slot_id=f"{lot_id}_{slot}",
+            )
+        )
+
+    for match in _LOT_SLOT_SPACED_RE.finditer(text):
+        lot_id = match.group(1).split()[0].upper()
+        slot = str(int(match.group(2)))
+        identifiers.append(
+            _QueryIdentifier(
+                kind="lot_slot",
+                start=match.start(),
+                lot_id=lot_id,
+                slot=slot,
+                lot_slot_id=f"{lot_id}_{slot}",
+            )
+        )
+
+    lot_slot_lot_ids = {item.lot_id for item in identifiers if item.kind == "lot_slot"}
+
+    for match in _LOT_ID_RE.finditer(text):
+        lot_id = match.group(0).upper()
+        if lot_id in lot_slot_lot_ids:
+            continue
+        identifiers.append(
+            _QueryIdentifier(
+                kind="lot",
+                start=match.start(),
+                lot_id=lot_id,
+            )
+        )
+
+    for match in _EQP_ID_RE.finditer(text):
+        if any(start <= match.start() < end for start, end in chamber_spans):
+            continue
+        eqp_id = match.group(0).upper()
+        identifiers.append(
+            _QueryIdentifier(
+                kind="eqp",
+                start=match.start(),
+                eqp_id=eqp_id,
+            )
+        )
+
+    identifiers.sort(key=lambda item: item.start)
+    return identifiers
+
+
+def _apply_identifier_to_task(task: Dict[str, Any], identifier: _QueryIdentifier) -> None:
+    if identifier.chamber_id and not task.get("chamber_id"):
+        task["chamber_id"] = identifier.chamber_id
+    if identifier.eqp_id and not task.get("eqp_id"):
+        task["eqp_id"] = identifier.eqp_id
+    if identifier.lot_slot_id and not task.get("lot_slot_id"):
+        task["lot_slot_id"] = identifier.lot_slot_id
+    if identifier.lot_id and not task.get("lot_id"):
+        task["lot_id"] = identifier.lot_id
+    if identifier.slot and not task.get("slot"):
+        task["slot"] = identifier.slot
+
+
+def _mark_task_identifiers_used(task: Dict[str, Any], used_keys: set[str]) -> None:
+    if task.get("chamber_id"):
+        chamber_id = str(task["chamber_id"]).upper()
+        used_keys.add(f"chamber:{chamber_id}")
+        used_keys.add(f"eqp:{_chamber_eqp_id(chamber_id)}")
+    if task.get("eqp_id"):
+        used_keys.add(f"eqp:{str(task['eqp_id']).upper()}")
+    if task.get("lot_slot_id"):
+        lot_slot_id = _normalize_lot_slot_id(task["lot_slot_id"]) or str(task["lot_slot_id"]).upper()
+        used_keys.add(f"lot_slot:{lot_slot_id}")
+        lot_match = re.match(r"^(.+)_(\d+)$", lot_slot_id)
+        if lot_match:
+            used_keys.add(f"lot:{lot_match.group(1)}")
+    if task.get("lot_id"):
+        used_keys.add(f"lot:{str(task['lot_id']).upper()}")
+
+
+def _pick_next_identifier(
+    identifiers: List[_QueryIdentifier],
+    used_keys: set[str],
+) -> Optional[_QueryIdentifier]:
+    for identifier in identifiers:
+        if identifier.usage_keys().isdisjoint(used_keys):
+            return identifier
+    return None
+
+
+def _enrich_tasks_from_query(
+    tasks: List[Dict[str, Any]],
+    query: str,
+) -> List[Dict[str, Any]]:
+    identifiers = _collect_query_identifiers(query)
+    used_keys: set[str] = set()
+    enriched_tasks: List[Dict[str, Any]] = []
+
+    for raw_task in tasks:
+        task = _coerce_lot_slot_fields(dict(raw_task))
+
+        if _task_has_query_identifier(task):
+            _mark_task_identifiers_used(task, used_keys)
+            enriched_tasks.append(task)
+            continue
+
+        identifier = _pick_next_identifier(identifiers, used_keys)
+        if identifier:
+            _apply_identifier_to_task(task, identifier)
+            task = _coerce_lot_slot_fields(task)
+            used_keys.update(identifier.usage_keys())
+
+        enriched_tasks.append(task)
+
+    return enriched_tasks
+
+
+def validate_and_enrich_tasks_node(state: AgentState) -> Dict[str, Any]:
+    tasks = list((state.get("extracted_entities") or {}).get("tasks") or [])
+    query = state.get("user_query") or ""
+
+    enriched_tasks = _enrich_tasks_from_query(tasks, query)
+    valid_tasks = [task for task in enriched_tasks if _task_has_query_identifier(task)]
+
+    if not valid_tasks:
+        return {
+            "extracted_entities": {"tasks": []},
+            "phase": "extraction_failed",
+            "message": (
+                "조회에 필요한 식별자(장비 ID, 챔버 ID, Lot ID, Lot+Slot ID)를 "
+                "찾을 수 없습니다."
+            ),
+        }
+
+    dropped_count = len(enriched_tasks) - len(valid_tasks)
+    message = "태스크 식별자 검증 및 정규식 보완 완료"
+    if dropped_count:
+        message += f" (식별자 없는 태스크 {dropped_count}건 제외)"
+
+    return {
+        "extracted_entities": {"tasks": valid_tasks},
+        "phase": "validated",
+        "message": message,
+    }
+
+
+def _route_after_validate(state: AgentState) -> str:
+    if state.get("phase") == "extraction_failed":
+        return "end"
+    return "db_query"
+
+
 def extract_entities_node(state: AgentState) -> Dict[str, Any]:
     reference_date = _parse_reference_date(state.get("reference_date"))
     reference_date_text = reference_date.strftime(DATE_OUTPUT_FORMAT)
@@ -483,12 +720,21 @@ checkpointer = MemorySaver()
 
 workflow = StateGraph(AgentState)
 workflow.add_node("extract_entities", extract_entities_node)
+workflow.add_node("validate_and_enrich_tasks", validate_and_enrich_tasks_node)
 workflow.add_node("db_query", db_query_node)
 workflow.add_node("selection", selection_node)
 workflow.add_node("build_artifact", build_artifact_node)
 
 workflow.add_edge(START, "extract_entities")
-workflow.add_edge("extract_entities", "db_query")
+workflow.add_edge("extract_entities", "validate_and_enrich_tasks")
+workflow.add_conditional_edges(
+    "validate_and_enrich_tasks",
+    _route_after_validate,
+    {
+        "db_query": "db_query",
+        "end": END,
+    },
+)
 workflow.add_conditional_edges(
     "db_query",
     _route_after_db_query,
