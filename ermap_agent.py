@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, TypedDict
@@ -56,50 +56,6 @@ Phase = Literal[
     "selection_failed",
     "completed",
 ]
-
-_CHAMBER_ID_RE = re.compile(
-    r"(?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}_[A-Z]{1,2}[1-8]?(?![A-Z0-9_])",
-    re.IGNORECASE,
-)
-_EQP_ID_RE = re.compile(
-    r"(?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}(?![A-Z0-9_])",
-    re.IGNORECASE,
-)
-_LOT_ID_RE = re.compile(
-    r"(?<![A-Z0-9_])(?:N[1456][A-Z]{3}\d{5}|E1T\d{4})(?![A-Z0-9_])",
-    re.IGNORECASE,
-)
-_LOT_SLOT_UNDERSCORE_RE = re.compile(
-    r"(?<![A-Z0-9_])((?:N[1456][A-Z]{3}\d{5}|E1T\d{4})_(\d+))(?![A-Z0-9_])",
-    re.IGNORECASE,
-)
-_LOT_SLOT_SPACED_RE = re.compile(
-    r"(?<![A-Z0-9_])((?:N[1456][A-Z]{3}\d{5}|E1T\d{4})\s+SLOT\s+(\d+))",
-    re.IGNORECASE,
-)
-
-
-@dataclass(frozen=True)
-class _QueryIdentifier:
-    kind: Literal["chamber", "eqp", "lot", "lot_slot"]
-    start: int
-    chamber_id: Optional[str] = None
-    eqp_id: Optional[str] = None
-    lot_id: Optional[str] = None
-    lot_slot_id: Optional[str] = None
-    slot: Optional[str] = None
-
-    def usage_keys(self) -> frozenset[str]:
-        keys: set[str] = set()
-        if self.chamber_id:
-            keys.add(f"chamber:{self.chamber_id}")
-        if self.eqp_id:
-            keys.add(f"eqp:{self.eqp_id}")
-        if self.lot_slot_id:
-            keys.add(f"lot_slot:{self.lot_slot_id}")
-        if self.lot_id:
-            keys.add(f"lot:{self.lot_id}")
-        return frozenset(keys)
 
 
 def _normalize_ermap_type(value: Any) -> Optional[str]:
@@ -252,6 +208,47 @@ class ErmapEntities(BaseModel):
     )
 
 
+_IDENTIFIER_FIELDS = ("eqp_id", "chamber_id", "lot_id", "lot_slot_id", "slot")
+
+
+class ErmapTaskIdentifierRepair(BaseModel):
+    """Stage-2 output: identifier fields only."""
+
+    eqp_id: Optional[str] = Field(default=None, description="장비 ID")
+    chamber_id: Optional[str] = Field(default=None, description="챔버 ID")
+    lot_id: Optional[str] = Field(default=None, description="Lot ID")
+    lot_slot_id: Optional[str] = Field(
+        default=None,
+        description="Lot+Slot 결합 ID. 예: N4ABC12345_3",
+    )
+    slot: Optional[str] = Field(default=None, description="Wafer slot 문자열. 예: 3")
+
+    @field_validator("eqp_id", "chamber_id", "lot_id", mode="before")
+    @classmethod
+    def _strip_upper_ids(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned.upper() if cleaned else value
+        return value
+
+    @field_validator("lot_slot_id", mode="before")
+    @classmethod
+    def _normalize_lot_slot_id_field(cls, value: Any) -> Any:
+        return _normalize_lot_slot_id(value)
+
+    @field_validator("slot", mode="before")
+    @classmethod
+    def _normalize_slot_field(cls, value: Any) -> Any:
+        return _normalize_slot_number(value)
+
+
+class ErmapRepairEntities(BaseModel):
+    tasks: List[ErmapTaskIdentifierRepair] = Field(
+        default_factory=list,
+        description="Stage-1 tasks와 동일 개수의 식별자 보정 결과",
+    )
+
+
 class AgentState(TypedDict, total=False):
     user_query: str
     reference_date: str
@@ -365,173 +362,113 @@ def _task_has_query_identifier(task: Dict[str, Any]) -> bool:
     )
 
 
-def _chamber_eqp_id(chamber_id: str) -> str:
-    return chamber_id.split("_", 1)[0].upper()
+def _tasks_need_identifier_repair(tasks: List[Dict[str, Any]]) -> bool:
+    return any(not _task_has_query_identifier(task) for task in tasks)
 
 
-def _collect_query_identifiers(query: str) -> List[_QueryIdentifier]:
-    text = query.upper()
-    identifiers: List[_QueryIdentifier] = []
-    chamber_spans: List[tuple[int, int]] = []
+def _merge_identifier_repair(
+    tasks: List[Dict[str, Any]],
+    repair_tasks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    merged_tasks: List[Dict[str, Any]] = []
 
-    for match in _CHAMBER_ID_RE.finditer(text):
-        chamber_id = match.group(0).upper()
-        identifiers.append(
-            _QueryIdentifier(
-                kind="chamber",
-                start=match.start(),
-                chamber_id=chamber_id,
-                eqp_id=_chamber_eqp_id(chamber_id),
-            )
-        )
-        chamber_spans.append((match.start(), match.end()))
+    for index, task in enumerate(tasks):
+        merged = dict(task)
+        if index < len(repair_tasks):
+            repair = repair_tasks[index]
+            for key in _IDENTIFIER_FIELDS:
+                if not merged.get(key) and repair.get(key) is not None:
+                    merged[key] = repair[key]
+        merged_tasks.append(_coerce_lot_slot_fields(merged))
 
-    for match in _LOT_SLOT_UNDERSCORE_RE.finditer(text):
-        lot_id = match.group(1).split("_", 1)[0].upper()
-        slot = str(int(match.group(2)))
-        identifiers.append(
-            _QueryIdentifier(
-                kind="lot_slot",
-                start=match.start(),
-                lot_id=lot_id,
-                slot=slot,
-                lot_slot_id=f"{lot_id}_{slot}",
-            )
-        )
-
-    for match in _LOT_SLOT_SPACED_RE.finditer(text):
-        lot_id = match.group(1).split()[0].upper()
-        slot = str(int(match.group(2)))
-        identifiers.append(
-            _QueryIdentifier(
-                kind="lot_slot",
-                start=match.start(),
-                lot_id=lot_id,
-                slot=slot,
-                lot_slot_id=f"{lot_id}_{slot}",
-            )
-        )
-
-    lot_slot_lot_ids = {item.lot_id for item in identifiers if item.kind == "lot_slot"}
-
-    for match in _LOT_ID_RE.finditer(text):
-        lot_id = match.group(0).upper()
-        if lot_id in lot_slot_lot_ids:
-            continue
-        identifiers.append(
-            _QueryIdentifier(
-                kind="lot",
-                start=match.start(),
-                lot_id=lot_id,
-            )
-        )
-
-    for match in _EQP_ID_RE.finditer(text):
-        if any(start <= match.start() < end for start, end in chamber_spans):
-            continue
-        eqp_id = match.group(0).upper()
-        identifiers.append(
-            _QueryIdentifier(
-                kind="eqp",
-                start=match.start(),
-                eqp_id=eqp_id,
-            )
-        )
-
-    identifiers.sort(key=lambda item: item.start)
-    return identifiers
+    return merged_tasks
 
 
-def _apply_identifier_to_task(task: Dict[str, Any], identifier: _QueryIdentifier) -> None:
-    if identifier.chamber_id and not task.get("chamber_id"):
-        task["chamber_id"] = identifier.chamber_id
-    if identifier.eqp_id and not task.get("eqp_id"):
-        task["eqp_id"] = identifier.eqp_id
-    if identifier.lot_slot_id and not task.get("lot_slot_id"):
-        task["lot_slot_id"] = identifier.lot_slot_id
-    if identifier.lot_id and not task.get("lot_id"):
-        task["lot_id"] = identifier.lot_id
-    if identifier.slot and not task.get("slot"):
-        task["slot"] = identifier.slot
-
-
-def _mark_task_identifiers_used(task: Dict[str, Any], used_keys: set[str]) -> None:
-    if task.get("chamber_id"):
-        chamber_id = str(task["chamber_id"]).upper()
-        used_keys.add(f"chamber:{chamber_id}")
-        used_keys.add(f"eqp:{_chamber_eqp_id(chamber_id)}")
-    if task.get("eqp_id"):
-        used_keys.add(f"eqp:{str(task['eqp_id']).upper()}")
-    if task.get("lot_slot_id"):
-        lot_slot_id = _normalize_lot_slot_id(task["lot_slot_id"]) or str(task["lot_slot_id"]).upper()
-        used_keys.add(f"lot_slot:{lot_slot_id}")
-        lot_match = re.match(r"^(.+)_(\d+)$", lot_slot_id)
-        if lot_match:
-            used_keys.add(f"lot:{lot_match.group(1)}")
-    if task.get("lot_id"):
-        used_keys.add(f"lot:{str(task['lot_id']).upper()}")
-
-
-def _unused_identifiers(
-    identifiers: List[_QueryIdentifier],
-    used_keys: set[str],
-) -> List[_QueryIdentifier]:
+def _repair_tasks_to_dicts(parsed: ErmapRepairEntities) -> List[Dict[str, Any]]:
     return [
-        identifier
-        for identifier in identifiers
-        if identifier.usage_keys().isdisjoint(used_keys)
+        _coerce_lot_slot_fields(task.model_dump(exclude_none=True))
+        for task in parsed.tasks
     ]
 
 
-def _enrich_tasks_from_query(
+def _safe_repair_task_dict(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        return ErmapTaskIdentifierRepair.model_validate(raw).model_dump(exclude_none=True)
+    except ValidationError:
+        return {
+            key: value
+            for key, value in raw.items()
+            if value is not None and key in ErmapTaskIdentifierRepair.model_fields
+        }
+
+
+def _parse_repair_response(parsed: Any) -> List[Dict[str, Any]]:
+    if isinstance(parsed, ErmapRepairEntities):
+        return _repair_tasks_to_dicts(parsed)
+    if hasattr(parsed, "model_dump"):
+        raw_tasks = parsed.model_dump(exclude_none=True).get("tasks", [])
+        return [_safe_repair_task_dict(task) for task in raw_tasks]
+    if isinstance(parsed, dict):
+        return [_safe_repair_task_dict(task) for task in parsed.get("tasks", [])]
+    return []
+
+
+def _load_repair_system_prompt() -> str:
+    prompt_path = Path(__file__).with_name("ermap_repair_prompt.yaml")
+    prompt_config = yaml.safe_load(prompt_path.read_text(encoding="utf-8"))
+    return prompt_config["system_prompt"]
+
+
+def _build_repair_human_message(user_query: str, tasks: List[Dict[str, Any]]) -> str:
+    payload = {
+        "user_query": user_query,
+        "tasks": tasks,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _repair_task_identifiers_with_llm(
+    user_query: str,
     tasks: List[Dict[str, Any]],
-    query: str,
 ) -> List[Dict[str, Any]]:
-    identifiers = _collect_query_identifiers(query)
-    used_keys: set[str] = set()
-    enriched_tasks: List[Dict[str, Any]] = []
-    needing_indices: List[int] = []
+    llm = ChatOpenAI(
+        model=DEFAULT_MODEL,
+        temperature=0,
+        timeout=DEFAULT_TIMEOUT_SEC,
+        max_retries=DEFAULT_MAX_RETRIES,
+    )
 
-    for raw_task in tasks:
-        task = _coerce_lot_slot_fields(dict(raw_task))
+    parsed = llm.with_structured_output(
+        ErmapRepairEntities,
+        method="function_calling",
+    ).invoke(
+        [
+            SystemMessage(content=_load_repair_system_prompt()),
+            HumanMessage(content=_build_repair_human_message(user_query, tasks)),
+        ]
+    )
 
-        if _task_has_query_identifier(task):
-            _mark_task_identifiers_used(task, used_keys)
-            enriched_tasks.append(task)
-            continue
-
-        needing_indices.append(len(enriched_tasks))
-        enriched_tasks.append(task)
-
-    if not needing_indices:
-        return enriched_tasks
-
-    available = _unused_identifiers(identifiers, used_keys)
-    if not available:
-        return enriched_tasks
-
-    if len(available) == 1:
-        shared_identifier = available[0]
-        for index in needing_indices:
-            task = dict(enriched_tasks[index])
-            _apply_identifier_to_task(task, shared_identifier)
-            enriched_tasks[index] = _coerce_lot_slot_fields(task)
-        return enriched_tasks
-
-    for index, identifier in zip(needing_indices, available):
-        task = dict(enriched_tasks[index])
-        _apply_identifier_to_task(task, identifier)
-        enriched_tasks[index] = _coerce_lot_slot_fields(task)
-
-    return enriched_tasks
+    repair_tasks = _parse_repair_response(parsed)
+    if len(repair_tasks) != len(tasks):
+        return tasks
+    return _merge_identifier_repair(tasks, repair_tasks)
 
 
-def validate_and_enrich_tasks_node(state: AgentState) -> Dict[str, Any]:
-    tasks = list((state.get("extracted_entities") or {}).get("tasks") or [])
-    query = state.get("user_query") or ""
+def repair_task_identifiers_node(state: AgentState) -> Dict[str, Any]:
+    tasks = [_coerce_lot_slot_fields(dict(task)) for task in (state.get("extracted_entities") or {}).get("tasks") or []]
+    if not tasks:
+        return {
+            "extracted_entities": {"tasks": []},
+            "phase": "extraction_failed",
+            "message": "추출된 태스크가 없습니다.",
+        }
 
-    enriched_tasks = _enrich_tasks_from_query(tasks, query)
-    valid_tasks = [task for task in enriched_tasks if _task_has_query_identifier(task)]
+    if _tasks_need_identifier_repair(tasks):
+        tasks = _repair_task_identifiers_with_llm(state.get("user_query") or "", tasks)
+
+    valid_tasks = [task for task in tasks if _task_has_query_identifier(task)]
 
     if not valid_tasks:
         return {
@@ -543,8 +480,8 @@ def validate_and_enrich_tasks_node(state: AgentState) -> Dict[str, Any]:
             ),
         }
 
-    dropped_count = len(enriched_tasks) - len(valid_tasks)
-    message = "태스크 식별자 검증 및 정규식 보완 완료"
+    dropped_count = len(tasks) - len(valid_tasks)
+    message = "태스크 식별자 검증 및 2차 LLM 보정 완료"
     if dropped_count:
         message += f" (식별자 없는 태스크 {dropped_count}건 제외)"
 
@@ -555,7 +492,7 @@ def validate_and_enrich_tasks_node(state: AgentState) -> Dict[str, Any]:
     }
 
 
-def _route_after_validate(state: AgentState) -> str:
+def _route_after_repair(state: AgentState) -> str:
     if state.get("phase") == "extraction_failed":
         return "end"
     return "db_query"
@@ -737,16 +674,16 @@ checkpointer = MemorySaver()
 
 workflow = StateGraph(AgentState)
 workflow.add_node("extract_entities", extract_entities_node)
-workflow.add_node("validate_and_enrich_tasks", validate_and_enrich_tasks_node)
+workflow.add_node("repair_task_identifiers", repair_task_identifiers_node)
 workflow.add_node("db_query", db_query_node)
 workflow.add_node("selection", selection_node)
 workflow.add_node("build_artifact", build_artifact_node)
 
 workflow.add_edge(START, "extract_entities")
-workflow.add_edge("extract_entities", "validate_and_enrich_tasks")
+workflow.add_edge("extract_entities", "repair_task_identifiers")
 workflow.add_conditional_edges(
-    "validate_and_enrich_tasks",
-    _route_after_validate,
+    "repair_task_identifiers",
+    _route_after_repair,
     {
         "db_query": "db_query",
         "end": END,
