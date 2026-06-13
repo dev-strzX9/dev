@@ -472,14 +472,15 @@ def _mark_task_identifiers_used(task: Dict[str, Any], used_keys: set[str]) -> No
         used_keys.add(f"lot:{str(task['lot_id']).upper()}")
 
 
-def _pick_next_identifier(
+def _unused_identifiers(
     identifiers: List[_QueryIdentifier],
     used_keys: set[str],
-) -> Optional[_QueryIdentifier]:
-    for identifier in identifiers:
-        if identifier.usage_keys().isdisjoint(used_keys):
-            return identifier
-    return None
+) -> List[_QueryIdentifier]:
+    return [
+        identifier
+        for identifier in identifiers
+        if identifier.usage_keys().isdisjoint(used_keys)
+    ]
 
 
 def _enrich_tasks_from_query(
@@ -489,6 +490,7 @@ def _enrich_tasks_from_query(
     identifiers = _collect_query_identifiers(query)
     used_keys: set[str] = set()
     enriched_tasks: List[Dict[str, Any]] = []
+    needing_indices: List[int] = []
 
     for raw_task in tasks:
         task = _coerce_lot_slot_fields(dict(raw_task))
@@ -498,13 +500,28 @@ def _enrich_tasks_from_query(
             enriched_tasks.append(task)
             continue
 
-        identifier = _pick_next_identifier(identifiers, used_keys)
-        if identifier:
-            _apply_identifier_to_task(task, identifier)
-            task = _coerce_lot_slot_fields(task)
-            used_keys.update(identifier.usage_keys())
-
+        needing_indices.append(len(enriched_tasks))
         enriched_tasks.append(task)
+
+    if not needing_indices:
+        return enriched_tasks
+
+    available = _unused_identifiers(identifiers, used_keys)
+    if not available:
+        return enriched_tasks
+
+    if len(available) == 1:
+        shared_identifier = available[0]
+        for index in needing_indices:
+            task = dict(enriched_tasks[index])
+            _apply_identifier_to_task(task, shared_identifier)
+            enriched_tasks[index] = _coerce_lot_slot_fields(task)
+        return enriched_tasks
+
+    for index, identifier in zip(needing_indices, available):
+        task = dict(enriched_tasks[index])
+        _apply_identifier_to_task(task, identifier)
+        enriched_tasks[index] = _coerce_lot_slot_fields(task)
 
     return enriched_tasks
 
