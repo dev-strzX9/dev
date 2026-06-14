@@ -35,13 +35,13 @@ from ermap_workflow import graph, invoke_extraction
 
 # 권장: invoke 헬퍼
 result = invoke_extraction(
-    "최근 일주일 EFG4803 PM1 BEVEL BACKSIDE MAP 보여줘",
+    "최근 일주일 EFG4803_PM1 BEVEL BACKSIDE MAP 보여줘",
     reference_date="2026-05-29",
 )
 
 # 또는 graph 직접 호출
 result = graph.invoke({
-    "user_query": "최근 일주일 EFG4803 PM1 BEVEL 보여줘",
+    "user_query": "최근 일주일 EFG4803_PM1 BEVEL 보여줘",
     "reference_date": "2026-05-29",
     "phase": "started",
 })
