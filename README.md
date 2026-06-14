@@ -14,11 +14,11 @@ DB 조회, HITL 선택, 렌더링은 **포함하지 않습니다.**
 
 | 파일 | 역할 |
 |------|------|
-| `ermap_agent.py` | 1차/2차 추출 로직, `run_entity_extraction()` |
+| `ermap_agent.py` | 1차/2차 추출 노드, Pydantic 모델 |
 | `llm_api.py` | OpenRouter `requests` API |
 | `ermap_prompt.yaml` | 1차 추출 프롬프트 |
 | `ermap_repair_prompt.yaml` | 2차 식별자 보정 프롬프트 |
-| `test_openrouter.py` | OpenRouter 테스트 CLI |
+| `ermap_workflow.py` | LangGraph 워크플로우, `graph`, `invoke_extraction()` |
 
 ## 설정
 
@@ -31,21 +31,21 @@ pip install -r requirements.txt
 ## 사용
 
 ```python
-from ermap_agent import run_entity_extraction
+from ermap_workflow import graph, invoke_extraction
 
-result = run_entity_extraction(
+# 권장: invoke 헬퍼
+result = invoke_extraction(
     "최근 일주일 EFG4803 PM1 BEVEL BACKSIDE MAP 보여줘",
     reference_date="2026-05-29",
 )
 
+# 또는 graph 직접 호출
+result = graph.invoke({
+    "user_query": "최근 일주일 EFG4803 PM1 BEVEL 보여줘",
+    "reference_date": "2026-05-29",
+    "phase": "started",
+})
+
 print(result["phase"])                 # validated | extraction_failed
 print(result["extracted_entities"])    # {"tasks": [...]}
-```
-
-## 테스트
-
-```bash
-python3 test_openrouter.py --mode extract
-python3 test_openrouter.py --mode stage1
-python3 test_openrouter.py --mode stage2
 ```

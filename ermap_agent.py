@@ -419,21 +419,3 @@ def repair_task_identifiers_node(state: AgentState) -> Dict[str, Any]:
         "phase": "validated",
         "message": message,
     }
-
-
-def run_entity_extraction(
-    user_query: str,
-    *,
-    reference_date: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Run stage-1 extraction and stage-2 identifier repair."""
-
-    state: AgentState = {"user_query": user_query, "phase": "started"}
-    if reference_date:
-        state["reference_date"] = reference_date
-
-    state.update(extract_entities_node(state))
-    if state.get("phase") == "extracted":
-        state.update(repair_task_identifiers_node(state))
-
-    return dict(state)
