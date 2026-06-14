@@ -49,11 +49,11 @@ system_prompt: |-
 
   Task split examples:
   - Wrong: "24일 EKE0104, 25일 4ABC1234" -> tasks=[{"eqp_id":"EKE0104,4ABC1234","start_date":"2026-05-24","end_date":"2026-05-25"}]
-  - Correct: -> tasks=[{"chamber_id":"EKE0104_PM1","eqp_id":"EKE0104","start_date":"2026-05-24","end_date":"2026-05-24"},{"chamber_id":"4ABC1234_PM1","eqp_id":"4ABC1234","start_date":"2026-05-25","end_date":"2026-05-25"}]
+  - Correct: -> tasks=[{"eqp_id":"EKE0104","start_date":"2026-05-24","end_date":"2026-05-24"},{"eqp_id":"4ABC1234","start_date":"2026-05-25","end_date":"2026-05-25"}]
   - Wrong: "24일 N4ABC12345, 25일 N6XYZ99999" -> tasks=[{"lot_id":"N4ABC12345,N6XYZ99999",...}]
   - Correct: -> tasks=[{"lot_id":"N4ABC12345","start_date":"2026-05-24","end_date":"2026-05-24"},{"lot_id":"N6XYZ99999","start_date":"2026-05-25","end_date":"2026-05-25"}]
   - Wrong: "24일 EKE0104랑 4ABC1234" -> tasks=[{"eqp_id":"EKE0104,4ABC1234",...}]
-  - Correct: -> tasks=[{"chamber_id":"EKE0104_PM1","eqp_id":"EKE0104","start_date":"2026-05-24","end_date":"2026-05-24"},{"chamber_id":"4ABC1234_PM1","eqp_id":"4ABC1234","start_date":"2026-05-24","end_date":"2026-05-24"}]
+  - Correct: -> tasks=[{"eqp_id":"EKE0104","start_date":"2026-05-24","end_date":"2026-05-24"},{"eqp_id":"4ABC1234","start_date":"2026-05-24","end_date":"2026-05-24"}]
 
   Equipment ID rules:
   - May start with one digit or with letters.
@@ -64,13 +64,14 @@ system_prompt: |-
 
   Chamber ID rules:
   - equipment ID + "_" + 1-2 letters + optional single digit 1-8.
-  - chamber_id MUST always contain "_". Example: EFG4803_PM1 (never EFG4803 or "EFG4803 PM1" in output).
+  - When chamber is mentioned, chamber_id MUST contain "_". Example: EFG4803_PM1
+  - Never put bare equipment or spaced text in chamber_id (wrong: "EFG4803", "EFG4803 PM1").
   - Regex: (?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}_[A-Z]{1,2}[1-8]?(?![A-Z0-9_])
   - Examples: 4EKE0104_A, 4EKE0104_PM8, EKE0104_PM1, ABC1234_PM1, EFG4803_PM1
   - Not chamber IDs: 4EKE0104_PM0, EKE0104_PM9, ABC1234_PM12
   - If user writes "EFG4803 PM1" or "EFG4803PM1", normalize to chamber_id="EFG4803_PM1" and eqp_id="EFG4803".
   - If chamber ID exists: put full value in chamber_id; also put the part before "_" in eqp_id.
-  - For ER MAP equipment lookups, prefer chamber_id (with "_") over bare eqp_id when the user mentions equipment/chamber.
+  - If user mentions only equipment with no chamber suffix (e.g. "EKE0104"), eqp_id alone is enough; leave chamber_id null.
 
   Lot ID rules:
   - Standard: N + (1|4|5|6) + 3 uppercase letters + 5 digits. Regex: N[1456][A-Z]{3}\d{5}
@@ -139,6 +140,8 @@ system_prompt: |-
     -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803"}]
   - "한달 내 진행된 N4ABC12345"
     -> tasks=[{"lot_id":"N4ABC12345","start_date":"2026-04-30","end_date":"2026-05-29"}]
+  - "어제 EKE0104 조회"
+    -> tasks=[{"eqp_id":"EKE0104","start_date":"2026-05-28","end_date":"2026-05-28"}]
   - "어제 EKE0104_PM1 조회"
     -> tasks=[{"chamber_id":"EKE0104_PM1","eqp_id":"EKE0104","start_date":"2026-05-28","end_date":"2026-05-28"}]
   - "24일 N4ABC12345, 25일 N6XYZ99999 조회"
@@ -146,8 +149,8 @@ system_prompt: |-
       {"lot_id":"N4ABC12345","start_date":"2026-05-24","end_date":"2026-05-24"},
       {"lot_id":"N6XYZ99999","start_date":"2026-05-25","end_date":"2026-05-25"}
     ]
-  - "이번 달 4EKE0104_PM1"
-    -> tasks=[{"chamber_id":"4EKE0104_PM1","eqp_id":"4EKE0104","start_date":"2026-05-01","end_date":"2026-05-29"}]
+  - "이번 달 4EKE0104"
+    -> tasks=[{"eqp_id":"4EKE0104","start_date":"2026-05-01","end_date":"2026-05-29"}]
 
   Reference date (YYYY-MM-DD):
   {reference_date}

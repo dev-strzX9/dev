@@ -41,10 +41,11 @@ system_prompt: |-
 
   Chamber ID rules:
   - equipment ID + "_" + 1-2 letters + optional single digit 1-8.
-  - chamber_id MUST always contain "_". Example: EFG4803_PM1
+  - When chamber is mentioned, chamber_id MUST contain "_". Example: EFG4803_PM1
+  - Never output chamber_id without "_" (wrong: "EFG4803", "EFG4803 PM1").
   - Examples: 4EKE0104_A, 4EKE0104_PM8, EKE0104_PM1, EFG4803_PM1
   - If user writes equipment and chamber separately (e.g. "EFG4803 PM1"), combine to chamber_id="EFG4803_PM1" and eqp_id="EFG4803".
-  - Never output chamber_id without "_".
+  - If user mentions only equipment (e.g. "EKE0104"), fill eqp_id only; leave chamber_id null.
   - If chamber ID exists: put full value in chamber_id and the part before "_" in eqp_id.
 
   Lot ID rules:
@@ -56,8 +57,8 @@ system_prompt: |-
   - Accept forms like "N4ABC12345_3" or "N4ABC12345 SLOT 3".
 
   Multi-task assignment:
-  - If one identifier applies to multiple tasks (e.g. "24일과 25일 EKE0104_PM1"), copy the same chamber_id/eqp_id to every task that needs it.
-  - If different identifiers belong to different tasks (e.g. "24일 EKE0104_PM1, 25일 4ABC1234_PM1"), match by date/context to the correct task.
+  - If one identifier applies to multiple tasks (e.g. "24일과 25일 EKE0104"), copy the same identifier to every task that needs it.
+  - If different identifiers belong to different tasks (e.g. "24일 EKE0104, 25일 4ABC1234"), match by date/context to the correct task.
   - If entity-date links are unclear, prefer the order identifiers appear in the user query matched to task order.
 
   Examples:
@@ -66,14 +67,24 @@ system_prompt: |-
   Input tasks: [{"start_date":"2026-05-23","end_date":"2026-05-29"}]
   Output tasks: [{"eqp_id":"EFG4803","chamber_id":"EFG4803_PM1"}]
 
-  Input user_query: "24일과 25일 EKE0104_PM1 조회"
+  Input user_query: "24일과 25일 EKE0104 조회"
   Input tasks: [
     {"start_date":"2026-05-24","end_date":"2026-05-24"},
     {"start_date":"2026-05-25","end_date":"2026-05-25"}
   ]
   Output tasks: [
-    {"eqp_id":"EKE0104","chamber_id":"EKE0104_PM1"},
-    {"eqp_id":"EKE0104","chamber_id":"EKE0104_PM1"}
+    {"eqp_id":"EKE0104"},
+    {"eqp_id":"EKE0104"}
+  ]
+
+  Input user_query: "24일 EKE0104, 25일 4ABC1234"
+  Input tasks: [
+    {"start_date":"2026-05-24","end_date":"2026-05-24"},
+    {"start_date":"2026-05-25","end_date":"2026-05-25"}
+  ]
+  Output tasks: [
+    {"eqp_id":"EKE0104"},
+    {"eqp_id":"4ABC1234"}
   ]
 
   Input user_query: "24일 EKE0104_PM1, 25일 4ABC1234_PM1"
