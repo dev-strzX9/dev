@@ -34,16 +34,6 @@ DATE_OUTPUT_FORMAT = "%Y-%m-%d"
 DATE_INPUT_FORMATS = ("%Y-%m-%d", "%Y%m%d", "%Y-%m-%d %H:%M", "%Y/%m/%d")
 REFERENCE_DATE_FORMATS = DATE_INPUT_FORMATS
 
-_ERMAP_TYPE_ALIASES = {
-    "1": "1",
-    "2": "2",
-    "prstrip": "1",
-    "pr strip": "1",
-    "피알스트립": "1",
-    "bevel": "2",
-    "베벨": "2",
-}
-
 Phase = Literal[
     "started",
     "extracted",
@@ -56,15 +46,6 @@ Phase = Literal[
     "selection_failed",
     "completed",
 ]
-
-
-def _normalize_ermap_type(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    key = str(value).strip().lower()
-    if key.isdigit() and key in ("1", "2"):
-        return key
-    return _ERMAP_TYPE_ALIASES.get(key)
 
 
 def _normalize_date_string(value: Any) -> Optional[str]:
@@ -152,10 +133,6 @@ class ErmapTask(BaseModel):
     )
     slot: Optional[str] = Field(default=None, description="Wafer slot 문자열. 예: 3")
     step: Optional[str] = Field(default=None, description="step 값")
-    ermap_type: Optional[str] = Field(
-        default=None,
-        description='ER MAP type "1"(PRSTRIP) 또는 "2"(BEVEL)',
-    )
     start_date: Optional[str] = Field(
         default=None,
         description='조회 시작일 YYYY-MM-DD (예: "2024-03-24")',
@@ -182,11 +159,6 @@ class ErmapTask(BaseModel):
     @classmethod
     def _normalize_slot_field(cls, value: Any) -> Any:
         return _normalize_slot_number(value)
-
-    @field_validator("ermap_type", mode="before")
-    @classmethod
-    def _normalize_ermap_type_field(cls, value: Any) -> Any:
-        return _normalize_ermap_type(value)
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
@@ -326,7 +298,6 @@ def _safe_task_dict(raw: Any) -> Dict[str, Any]:
         return ErmapTask.model_validate(raw).model_dump(exclude_none=True)
     except ValidationError:
         coerced = _coerce_lot_slot_fields(dict(raw))
-        coerced["ermap_type"] = _normalize_ermap_type(coerced.get("ermap_type"))
         try:
             return ErmapTask.model_validate(coerced).model_dump(exclude_none=True)
         except ValidationError:

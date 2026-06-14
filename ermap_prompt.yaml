@@ -10,7 +10,6 @@ system_prompt: |-
   - User queries may be in Korean or English; extract entities as defined below.
 
   JSON type rules (critical):
-  - ermap_type: JSON strings only — "1" or "2". Never numeric 1 or 2.
   - start_date, end_date: JSON strings in YYYY-MM-DD only. Example: "2024-03-24"
     - Forbidden: "20240324", raw day text like "24일"
   - slot: JSON string without leading zeros. Example: "3" (not "03")
@@ -24,7 +23,7 @@ system_prompt: |-
   - Split tasks when dates, equipment, chambers, lots, or lot+slot groupings differ.
   - Multiple equipment/chamber/lot/lot+slot values must become separate tasks even on the same date.
   - Never merge multiple IDs into one comma-separated string or one task.
-  - Copy shared step and ermap_type into each applicable task.
+  - Copy shared step into each applicable task.
   - Put task-specific fields only on the task they belong to.
 
   Task fields to extract:
@@ -34,14 +33,13 @@ system_prompt: |-
   4. lot_slot_id
   5. slot
   6. step
-  7. ermap_type
-  8. start_date
-  9. end_date
+  7. start_date
+  8. end_date
 
   Task field rules:
   - eqp_id, chamber_id, lot_id, lot_slot_id: single string per task only.
   - Multiple equipment/chambers/lots/lot+slots on the same date still require multiple tasks.
-  - slot, step, ermap_type, start_date, end_date: single value per task only.
+  - slot, step, start_date, end_date: single value per task only.
 
   Task split rules:
   - Different dates on different entities → split tasks.
@@ -85,10 +83,13 @@ system_prompt: |-
   - lot_slot_id format: LOT_ID + "_" + slot. Example: N4ABC12345_3
   - Normalize "N4ABC12345_03" or "slot 03" to slot="3", lot_slot_id="N4ABC12345_3"
 
-  ER MAP type rules:
-  - PRSTRIP, prstrip, PR STRIP, 피알스트립 -> ermap_type="1"
-  - BEVEL, bevel, 베벨 -> ermap_type="2"
-  - If not mentioned -> null
+  ER MAP request wording (do NOT extract as a type field):
+  - Users may say ER MAP, ERMAP, BEVEL, PR STRIP, PRSTRIP, BEVEL BACKSIDE MAP,
+    BEVEL FRONT SIDE MAP, 피알스트립, 베벨, etc.
+  - These all mean the same thing: show an ER MAP. They are NOT separate task fields.
+  - Do NOT output ermap_type or any type code. There is no type field in the schema.
+  - Still extract equipment/chamber/lot/lot+slot and dates when stated.
+  - Ignore BEVEL/PRSTRIP wording unless the user ties it to a real step value.
 
   Step rules:
   - If user mentions step/스텝 with a value, copy it to step.
@@ -133,9 +134,11 @@ system_prompt: |-
 
   Date examples (reference date = 2026-05-29):
   - "EFG4803_PM1 BEVEL 조회" (no date)
-    -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803","ermap_type":"2"}]
-  - "최근 일주일 EFG4803_PM1 BEVEL"
-    -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803","ermap_type":"2","start_date":"2026-05-23","end_date":"2026-05-29"}]
+    -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803"}]
+  - "최근 일주일 EFG4803_PM1 BEVEL BACKSIDE MAP"
+    -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803","start_date":"2026-05-23","end_date":"2026-05-29"}]
+  - "EFG4803_PM1 PR STRIP 보여줘"
+    -> tasks=[{"chamber_id":"EFG4803_PM1","eqp_id":"EFG4803"}]
   - "한달 내 진행된 N4ABC12345"
     -> tasks=[{"lot_id":"N4ABC12345","start_date":"2026-04-30","end_date":"2026-05-29"}]
   - "어제 EKE0104 조회"

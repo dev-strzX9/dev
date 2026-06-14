@@ -176,7 +176,6 @@ def task_to_db_params(task: Dict[str, Any]) -> Dict[str, Any]:
         "oper_desc": task.get("step"),
         "lot_id": task.get("lot_id"),
         "unit_id": task.get("slot"),
-        "type": task.get("ermap_type"),
         "start_date": task.get("start_date"),
         "end_date": task.get("end_date"),
     }
@@ -358,9 +357,8 @@ def mock_query_db(params: Dict[str, Any]) -> List[ErmapQueryRow]:
     equipment = (params.get("main_eqp_id") or chamber.split("_")[0]).upper()
     lot_id = (params.get("lot_id") or "N4ABC12345").upper()
     slot = params.get("unit_id") or "3"
-    preferred_type = params.get("type")
 
-    base_rows = [
+    return [
         ErmapQueryRow(
             eqp_id=chamber,
             main_eqp_id=equipment,
@@ -402,9 +400,3 @@ def mock_query_db(params: Dict[str, Any]) -> List[ErmapQueryRow]:
             side_info="front_side",
         ),
     ]
-
-    if preferred_type:
-        typed = [row for row in base_rows if row.type == preferred_type]
-        if typed:
-            return typed
-    return base_rows

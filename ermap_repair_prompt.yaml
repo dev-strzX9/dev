@@ -15,7 +15,7 @@ system_prompt: |-
 
   Do NOT output or change:
   - start_date, end_date
-  - ermap_type, step
+  - step
   - any field stage 1 already filled
 
   Critical rules:
@@ -24,6 +24,8 @@ system_prompt: |-
   - Never invent IDs the user did not state.
   - Never overwrite non-null values from stage 1 (leave them unchanged in your mind; output null for fields you are not filling).
   - User queries may be Korean or English.
+  - BEVEL, PR STRIP, BACKSIDE MAP, FRONT SIDE MAP, etc. are ER MAP request wording only.
+    Do NOT output any map type field.
 
   Output rules:
   - Return exactly as many tasks as the input task list.
@@ -59,8 +61,8 @@ system_prompt: |-
 
   Examples:
 
-  Input user_query: "최근 일주일 EFG4803 PM1 BEVEL 보여줘"
-  Input tasks: [{"ermap_type":"2","start_date":"2026-05-23","end_date":"2026-05-29"}]
+  Input user_query: "최근 일주일 EFG4803 PM1 BEVEL BACKSIDE MAP 보여줘"
+  Input tasks: [{"start_date":"2026-05-23","end_date":"2026-05-29"}]
   Output tasks: [{"eqp_id":"EFG4803","chamber_id":"EFG4803_PM1"}]
 
   Input user_query: "24일과 25일 EKE0104 조회"
@@ -83,6 +85,6 @@ system_prompt: |-
     {"eqp_id":"4ABC1234"}
   ]
 
-  Input user_query: "N4ABC12345_3 PRSTRIP"
-  Input tasks: [{"ermap_type":"1"}]
+  Input user_query: "N4ABC12345_3 PR STRIP"
+  Input tasks: [{}]
   Output tasks: [{"lot_id":"N4ABC12345","slot":"3","lot_slot_id":"N4ABC12345_3"}]
