@@ -23,7 +23,6 @@ system_prompt: |-
   - Split tasks when dates, equipment, chambers, lots, or lot+slot groupings differ.
   - Multiple equipment/chamber/lot/lot+slot values must become separate tasks even on the same date.
   - Never merge multiple IDs into one comma-separated string or one task.
-  - Copy shared step into each applicable task.
   - Put task-specific fields only on the task they belong to.
 
   Task fields to extract:
@@ -32,14 +31,13 @@ system_prompt: |-
   3. lot_id
   4. lot_slot_id
   5. slot
-  6. step
-  7. start_date
-  8. end_date
+  6. start_date
+  7. end_date
 
   Task field rules:
   - eqp_id, chamber_id, lot_id, lot_slot_id: single string per task only.
   - Multiple equipment/chambers/lots/lot+slots on the same date still require multiple tasks.
-  - slot, step, start_date, end_date: single value per task only.
+  - slot, start_date, end_date: single value per task only.
 
   Task split rules:
   - Different dates on different entities → split tasks.
@@ -89,11 +87,8 @@ system_prompt: |-
   - These all mean the same thing: show an ER MAP. They are NOT separate task fields.
   - Do NOT output ermap_type or any type code. There is no type field in the schema.
   - Still extract equipment/chamber/lot/lot+slot and dates when stated.
-  - Ignore BEVEL/PRSTRIP wording unless the user ties it to a real step value.
-
-  Step rules:
-  - If user mentions step/스텝 with a value, copy it to step.
-  - Examples: "step 12" -> step="12", "스텝 MAIN" -> step="MAIN"
+  - Ignore BEVEL/PRSTRIP/step wording; they are request phrasing, not task fields.
+  - Do NOT extract step/스텝. There is no step field in the schema.
 
   Date rules:
   - Output start_date and end_date as YYYY-MM-DD strings only.

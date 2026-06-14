@@ -9,13 +9,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 import yaml
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from ermap_llm import DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SEC, create_chat_llm
+from llm_api import chat_structured
 from ermap_selection import (
     ErmapQueryRow,
     format_query_results_message,
@@ -129,7 +128,6 @@ class ErmapTask(BaseModel):
         description="Lot+Slot 결합 ID. 예: N4ABC12345_3",
     )
     slot: Optional[str] = Field(default=None, description="Wafer slot 문자열. 예: 3")
-    step: Optional[str] = Field(default=None, description="step 값")
     start_date: Optional[str] = Field(
         default=None,
         description='조회 시작일 YYYY-MM-DD (예: "2024-03-24")',
@@ -139,7 +137,7 @@ class ErmapTask(BaseModel):
         description='조회 종료일 YYYY-MM-DD (예: "2024-03-24")',
     )
 
-    @field_validator("eqp_id", "chamber_id", "lot_id", "step", mode="before")
+    @field_validator("eqp_id", "chamber_id", "lot_id", mode="before")
     @classmethod
     def _strip_upper_ids(cls, value: Any) -> Any:
         if isinstance(value, str):
@@ -401,16 +399,10 @@ def _repair_task_identifiers_with_llm(
     user_query: str,
     tasks: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    llm = create_chat_llm()
-
-    parsed = llm.with_structured_output(
-        ErmapRepairEntities,
-        method="function_calling",
-    ).invoke(
-        [
-            SystemMessage(content=_load_repair_system_prompt()),
-            HumanMessage(content=_build_repair_human_message(user_query, tasks)),
-        ]
+    parsed = chat_structured(
+        system_prompt=_load_repair_system_prompt(),
+        user_content=_build_repair_human_message(user_query, tasks),
+        response_model=ErmapRepairEntities,
     )
 
     repair_tasks = _parse_repair_response(parsed)
@@ -472,16 +464,10 @@ def extract_entities_node(state: AgentState) -> Dict[str, Any]:
         reference_date_text,
     )
 
-    llm = create_chat_llm()
-
-    parsed = llm.with_structured_output(
-        ErmapEntities,
-        method="function_calling",
-    ).invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=state["user_query"]),
-        ]
+    parsed = chat_structured(
+        system_prompt=system_prompt,
+        user_content=state["user_query"],
+        response_model=ErmapEntities,
     )
 
     if isinstance(parsed, ErmapEntities):

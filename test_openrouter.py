@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-test ER MAP agent LLM calls via OpenRouter."""
+"""Smoke-test ER MAP agent LLM calls via OpenRouter requests API."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ import os
 import sys
 import uuid
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
-from ermap_agent import ErmapEntities, extract_entities_node, repair_task_identifiers_node
-from ermap_llm import create_chat_llm, get_llm_config_summary
+from ermap_agent import (
+    ErmapEntities,
+    extract_entities_node,
+    repair_task_identifiers_node,
+)
+from llm_api import chat_completion, chat_structured, get_llm_config_summary
 
 
 def _require_openrouter_key() -> None:
@@ -27,11 +29,14 @@ def _require_openrouter_key() -> None:
 
 
 def test_ping() -> None:
-    llm = create_chat_llm()
-    response = llm.invoke([HumanMessage(content="Reply with exactly: pong")])
+    content = chat_completion(
+        [
+            {"role": "user", "content": "Reply with exactly: pong"},
+        ]
+    )
     print("=== ping ===")
     print(get_llm_config_summary())
-    print(response.content)
+    print(content)
 
 
 def test_stage1_extract(user_query: str, reference_date: str) -> None:
@@ -74,22 +79,14 @@ def test_structured_extract(user_query: str, reference_date: str) -> None:
         reference_date,
     )
 
-    llm = create_chat_llm()
-    parsed = llm.with_structured_output(
-        ErmapEntities,
-        method="function_calling",
-    ).invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_query),
-        ]
+    parsed = chat_structured(
+        system_prompt=system_prompt,
+        user_content=user_query,
+        response_model=ErmapEntities,
     )
 
     print("=== structured stage-1 ===")
-    if hasattr(parsed, "model_dump"):
-        print(json.dumps(parsed.model_dump(exclude_none=True), ensure_ascii=False, indent=2))
-    else:
-        print(parsed)
+    print(json.dumps(parsed.model_dump(exclude_none=True), ensure_ascii=False, indent=2))
 
 
 def test_full_graph(user_query: str, reference_date: str) -> None:

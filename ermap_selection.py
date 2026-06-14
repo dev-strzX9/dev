@@ -7,10 +7,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 import yaml
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
-from ermap_llm import create_chat_llm
+from llm_api import chat_structured
 
 _ERMAP_TYPE_ALIASES = {
     "1": "1",
@@ -170,7 +169,6 @@ def task_to_db_params(task: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "main_eqp_id": task.get("eqp_id"),
         "eqp_id": task.get("chamber_id"),
-        "oper_desc": task.get("step"),
         "lot_id": task.get("lot_id"),
         "unit_id": task.get("slot"),
         "start_date": task.get("start_date"),
@@ -293,15 +291,10 @@ def extract_result_filter_llm(user_reply: str) -> ResultFilter:
     prompt_config = yaml.safe_load(prompt_path.read_text(encoding="utf-8"))
     system_prompt = prompt_config["system_prompt"]
 
-    llm = create_chat_llm()
-    parsed = llm.with_structured_output(
-        ResultFilter,
-        method="function_calling",
-    ).invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_reply),
-        ]
+    parsed = chat_structured(
+        system_prompt=system_prompt,
+        user_content=user_reply,
+        response_model=ResultFilter,
     )
 
     if isinstance(parsed, ResultFilter):

@@ -15,7 +15,6 @@ system_prompt: |-
 
   Do NOT output or change:
   - start_date, end_date
-  - step
   - any field stage 1 already filled
 
   Critical rules:
