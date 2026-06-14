@@ -8,12 +8,9 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, field_validator
 
-DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_TIMEOUT_SEC = 60
-DEFAULT_MAX_RETRIES = 2
+from ermap_llm import create_chat_llm
 
 _ERMAP_TYPE_ALIASES = {
     "1": "1",
@@ -296,12 +293,7 @@ def extract_result_filter_llm(user_reply: str) -> ResultFilter:
     prompt_config = yaml.safe_load(prompt_path.read_text(encoding="utf-8"))
     system_prompt = prompt_config["system_prompt"]
 
-    llm = ChatOpenAI(
-        model=DEFAULT_MODEL,
-        temperature=0,
-        timeout=DEFAULT_TIMEOUT_SEC,
-        max_retries=DEFAULT_MAX_RETRIES,
-    )
+    llm = create_chat_llm()
     parsed = llm.with_structured_output(
         ResultFilter,
         method="function_calling",

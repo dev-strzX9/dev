@@ -10,12 +10,12 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
+from ermap_llm import DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SEC, create_chat_llm
 from ermap_selection import (
     ErmapQueryRow,
     format_query_results_message,
@@ -26,9 +26,6 @@ from ermap_selection import (
     task_to_db_params,
 )
 
-DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_TIMEOUT_SEC = 60
-DEFAULT_MAX_RETRIES = 2
 DEFAULT_LOOKBACK_DAYS = 1
 DATE_OUTPUT_FORMAT = "%Y-%m-%d"
 DATE_INPUT_FORMATS = ("%Y-%m-%d", "%Y%m%d", "%Y-%m-%d %H:%M", "%Y/%m/%d")
@@ -404,12 +401,7 @@ def _repair_task_identifiers_with_llm(
     user_query: str,
     tasks: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    llm = ChatOpenAI(
-        model=DEFAULT_MODEL,
-        temperature=0,
-        timeout=DEFAULT_TIMEOUT_SEC,
-        max_retries=DEFAULT_MAX_RETRIES,
-    )
+    llm = create_chat_llm()
 
     parsed = llm.with_structured_output(
         ErmapRepairEntities,
@@ -480,12 +472,7 @@ def extract_entities_node(state: AgentState) -> Dict[str, Any]:
         reference_date_text,
     )
 
-    llm = ChatOpenAI(
-        model=DEFAULT_MODEL,
-        temperature=0,
-        timeout=DEFAULT_TIMEOUT_SEC,
-        max_retries=DEFAULT_MAX_RETRIES,
-    )
+    llm = create_chat_llm()
 
     parsed = llm.with_structured_output(
         ErmapEntities,
