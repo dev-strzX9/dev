@@ -14,7 +14,7 @@ from ermap_agent import (
     extract_entities_node,
     repair_task_identifiers_node,
 )
-from llm_api import chat_completion, chat_structured, get_llm_config_summary
+from llm_api import chat_completion, chat_structured
 
 
 def _require_openrouter_key() -> None:
@@ -35,7 +35,6 @@ def test_ping() -> None:
         ]
     )
     print("=== ping ===")
-    print(get_llm_config_summary())
     print(content)
 
 
@@ -125,7 +124,6 @@ def main() -> None:
     args = parser.parse_args()
 
     _require_openrouter_key()
-    print(get_llm_config_summary())
     print()
 
     if args.mode == "ping":
