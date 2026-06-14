@@ -22,7 +22,7 @@ def _require_openrouter_key() -> None:
         print(
             "OPENROUTER_API_KEY 환경 변수가 필요합니다.\n"
             "예: export OPENROUTER_API_KEY='sk-or-v1-...'\n"
-            "예: export ERMAP_LLM_MODEL='nvidia/nemotron-3-ultra-550b-a55b:free'",
+            "예: export OPENROUTER_MODEL='nvidia/nemotron-3-ultra-550b-a55b:free'",
             file=sys.stderr,
         )
         sys.exit(1)
