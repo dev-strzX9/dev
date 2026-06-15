@@ -419,3 +419,14 @@ def repair_task_identifiers_node(state: AgentState) -> Dict[str, Any]:
         "phase": "validated",
         "message": message,
     }
+
+
+def get_db_query_node(state: AgentState) -> Dict[str, Any]:
+    """추후 업데이트 예정"""
+    return None
+
+def scaler_node(state: AgentState) -> Dict[str, Any]:
+    """추후 업데이트 예정"""
+    return None 
+
+    

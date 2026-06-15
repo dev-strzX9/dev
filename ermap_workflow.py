@@ -10,6 +10,8 @@ from ermap_agent import (
     AgentState,
     extract_entities_node,
     repair_task_identifiers_node,
+    get_db_query_node,
+    scaler_node,
 )
 
 workflow = StateGraph(AgentState)
@@ -18,7 +20,9 @@ workflow.add_node("repair_task_identifiers", repair_task_identifiers_node)
 
 workflow.add_edge(START, "extract_entities")
 workflow.add_edge("extract_entities", "repair_task_identifiers")
-workflow.add_edge("repair_task_identifiers", END)
+workflow.add_edge("repair_task_identifiers", "get_db_query")
+workflow.add_edge("get_db_query", "scaler_node") 
+workflow.add_edge("scaler_node", END)
 
 graph = workflow.compile()
 
