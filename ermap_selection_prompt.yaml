@@ -11,7 +11,6 @@ system_prompt: |-
     Examples: "BACKSIDE" -> side_info=backside, "recipe RCP_A" -> eqp_recipe_id=RCP_A
   - Both can be combined: numbers narrow the set, column fields further filter.
   - Use null for unknown column fields. Use [] when no list numbers are mentioned.
-  - type: "1" (PRSTRIP) or "2" (BEVEL)
 
   Columns:
   - eqp_id: chamber ID
@@ -20,5 +19,5 @@ system_prompt: |-
   - oper_desc: operation
   - lot_id: lot ID
   - unit_id: slot
-  - type: "1" or "2"
+  - type: PRSTRIP or BEVEL (as stored in DB)
   - side_info: front_side or backside

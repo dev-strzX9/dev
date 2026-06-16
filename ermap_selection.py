@@ -10,8 +10,6 @@ from pydantic import BaseModel, Field
 
 from llm_api import chat_structured
 
-_TYPE_LABELS = {"1": "PRSTRIP", "2": "BEVEL"}
-
 _FILTER_FIELDS = (
     ("eqp_id", "eqp_id", True),
     ("main_eqp_id", "main_eqp_id", False),
@@ -50,7 +48,7 @@ class ResultFilter(BaseModel):
     oper_desc: Optional[str] = Field(default=None, description="Operation")
     lot_id: Optional[str] = Field(default=None, description="Lot ID")
     unit_id: Optional[str] = Field(default=None, description="Slot")
-    type: Optional[str] = Field(default=None, description='1=PRSTRIP, 2=BEVEL')
+    type: Optional[str] = Field(default=None, description="PRSTRIP or BEVEL")
     side_info: Optional[str] = Field(default=None, description="front_side or backside")
 
 
@@ -68,12 +66,11 @@ def format_query_results_message(rows: Sequence[ErmapQueryRow]) -> str:
         "",
     ]
     for index, row in enumerate(rows, start=1):
-        type_label = _TYPE_LABELS.get(row.type or "", row.type or "-")
         lines.append(
             f"{index}. chamber={row.eqp_id} | equip={row.main_eqp_id} | "
             f"recipe={row.eqp_recipe_id or '-'} | oper={row.oper_desc or '-'} | "
             f"lot={row.lot_id or '-'} | slot={row.unit_id or '-'} | "
-            f"type={type_label} | side={row.side_info or '-'}"
+            f"type={row.type or '-'} | side={row.side_info or '-'}"
         )
     return "\n".join(lines)
 
