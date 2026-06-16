@@ -76,22 +76,31 @@ class ErmapQueryResponse(BaseModel):
     rows: List[ErmapQueryRow] = Field(default_factory=list)
 
 
-def task_to_db_params(task: Dict[str, Any]) -> Dict[str, Any]:
+def _task_as_dict(task: Any) -> Dict[str, Any]:
+    if isinstance(task, dict):
+        return task
+    if isinstance(task, BaseModel):
+        return task.model_dump(exclude_none=True)
+    return dict(task)
+
+
+def task_to_db_params(task: Any) -> Dict[str, Any]:
     """Map extracted task fields (eqp/chamber/lot/slot/lot_slot/date) to API params."""
 
+    data = _task_as_dict(task)
     params = ErmapQueryParams(
-        main_eqp_id=task.get("eqp_id"),
-        eqp_id=task.get("chamber_id"),
-        lot_id=task.get("lot_id"),
-        unit_id=task.get("slot"),
-        lot_slot_id=task.get("lot_slot_id"),
-        start_date=task.get("start_date"),
-        end_date=task.get("end_date"),
+        main_eqp_id=data.get("eqp_id"),
+        eqp_id=data.get("chamber_id"),
+        lot_id=data.get("lot_id"),
+        unit_id=data.get("slot"),
+        lot_slot_id=data.get("lot_slot_id"),
+        start_date=data.get("start_date"),
+        end_date=data.get("end_date"),
     )
     return params.model_dump(exclude_none=True)
 
 
-def tasks_to_db_params(tasks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def tasks_to_db_params(tasks: Sequence[Any]) -> List[Dict[str, Any]]:
     return [task_to_db_params(task) for task in tasks]
 
 

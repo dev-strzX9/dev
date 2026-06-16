@@ -201,6 +201,7 @@ class AgentState(TypedDict, total=False):
     user_query: str
     reference_date: str
     extracted_entities: Dict[str, Any]
+    rst: Any
     query_results: List[Dict[str, Any]]
     filtered_results: List[Dict[str, Any]]
     artifact: Dict[str, Any]

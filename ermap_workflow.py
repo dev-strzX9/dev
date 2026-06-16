@@ -1,10 +1,10 @@
-"""ER MAP workflow: extract, repair identifiers, API query, and HITL selection."""
+"""ER MAP workflow: extract, repair identifiers, data load, and HITL selection."""
 
 from __future__ import annotations
 
-import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+import pandas as pd
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
@@ -14,10 +14,10 @@ from ermap_agent import (
     extract_entities_node,
     repair_task_identifiers_node,
 )
+from ermap_data_load import DATA_LOAD_NODE
 from ermap_selection import (
     ErmapQueryRow,
     format_query_results_message,
-    query_ermap_api,
     resolve_user_selection,
     rows_from_dicts,
     rows_to_dicts,
@@ -40,35 +40,19 @@ def is_awaiting_resume(graph: Any, config: Dict[str, Any]) -> bool:
     return bool(graph.get_state(config).next)
 
 
-def db_query_node(state: AgentState) -> Dict[str, Any]:
-    tasks = (state.get("extracted_entities") or {}).get("tasks") or []
-    if not tasks:
-        return _update(message="조회할 task가 없습니다.", query_results=[], phase="no_results")
-
-    try:
-        rows = query_ermap_api(tasks, api_url=os.environ.get("ERMAP_QUERY_API_URL"))
-    except Exception as exc:
-        return _update(
-            message=f"ER MAP API 조회 실패: {exc}",
-            query_results=[],
-            phase="no_results",
-        )
-
-    if not rows:
-        return _update(message="조회 결과가 없습니다.", query_results=[], phase="no_results")
-
-    return _update(
-        message=f"DB 조회 완료 ({len(rows)}건)",
-        query_results=rows_to_dicts(rows),
-        phase="queried",
-    )
+def _rows_from_state(state: AgentState) -> List[Dict[str, Any]]:
+    df = state.get("rst")
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        return df.to_dict(orient="records")
+    return state.get("query_results") or []
 
 
 def selection_node(state: AgentState) -> Dict[str, Any]:
-    rows = rows_from_dicts(state.get("query_results") or [])
-    if not rows:
+    raw_rows = _rows_from_state(state)
+    if not raw_rows:
         return _update(message="조회 결과가 없습니다.", filtered_results=[], phase="no_results")
 
+    rows = rows_from_dicts(raw_rows)
     if len(rows) == 1:
         return _update(
             message="조회 결과 1건 — 자동 선택",
@@ -128,8 +112,9 @@ def build_artifact_node(state: AgentState) -> Dict[str, Any]:
     )
 
 
-def _route_after_db_query(state: AgentState) -> str:
-    if state.get("query_results"):
+def _route_after_data_load(state: AgentState) -> str:
+    df = state.get("rst")
+    if isinstance(df, pd.DataFrame) and not df.empty:
         return "selection"
     return "end"
 
@@ -139,16 +124,16 @@ checkpointer = MemorySaver()
 workflow = StateGraph(AgentState)
 workflow.add_node("extract_entities", extract_entities_node)
 workflow.add_node("repair_task_identifiers", repair_task_identifiers_node)
-workflow.add_node("db_query", db_query_node)
+workflow.add_node("data_load", DATA_LOAD_NODE)
 workflow.add_node("selection", selection_node)
 workflow.add_node("build_artifact", build_artifact_node)
 
 workflow.add_edge(START, "extract_entities")
 workflow.add_edge("extract_entities", "repair_task_identifiers")
-workflow.add_edge("repair_task_identifiers", "db_query")
+workflow.add_edge("repair_task_identifiers", "data_load")
 workflow.add_conditional_edges(
-    "db_query",
-    _route_after_db_query,
+    "data_load",
+    _route_after_data_load,
     {"selection": "selection", "end": END},
 )
 workflow.add_edge("selection", "build_artifact")
