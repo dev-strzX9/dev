@@ -1,19 +1,15 @@
-"""ER MAP API query params, DB row models, API client, and HITL selection."""
+"""ER MAP query result models and HITL selection."""
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-import requests
 import yaml
 from pydantic import BaseModel, Field
 
 from llm_api import chat_structured
-
-DEFAULT_API_TIMEOUT_SEC = 30
 
 _KOREAN_ORDINALS = {"첫": 1, "첫번째": 1, "두": 2, "두번째": 2, "둘": 2, "세": 3, "세번째": 3}
 _ENGLISH_ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4}
@@ -31,20 +27,8 @@ _FILTER_FIELDS = (
 )
 
 
-class ErmapQueryParams(BaseModel):
-    """Query params sent to the ER MAP API (mapped from ErmapTask)."""
-
-    main_eqp_id: Optional[str] = Field(default=None, description="Equipment ID")
-    eqp_id: Optional[str] = Field(default=None, description="Chamber ID")
-    lot_id: Optional[str] = Field(default=None, description="Lot ID")
-    unit_id: Optional[str] = Field(default=None, description="Slot")
-    lot_slot_id: Optional[str] = Field(default=None, description="Lot+Slot ID")
-    start_date: Optional[str] = Field(default=None, description="Start date YYYY-MM-DD")
-    end_date: Optional[str] = Field(default=None, description="End date YYYY-MM-DD")
-
-
 class ErmapQueryRow(BaseModel):
-    """One ER MAP row returned from the API / DB."""
+    """One ER MAP row returned from the DB."""
 
     eqp_id: str = Field(description="Chamber ID")
     main_eqp_id: str = Field(description="Equipment ID")
@@ -68,146 +52,12 @@ class ResultFilter(BaseModel):
     side_info: Optional[str] = None
 
 
-class ErmapQueryRequest(BaseModel):
-    queries: List[ErmapQueryParams] = Field(default_factory=list)
-
-
-class ErmapQueryResponse(BaseModel):
-    rows: List[ErmapQueryRow] = Field(default_factory=list)
-
-
-def _task_as_dict(task: Any) -> Dict[str, Any]:
-    if isinstance(task, dict):
-        return task
-    if isinstance(task, BaseModel):
-        return task.model_dump(exclude_none=True)
-    return dict(task)
-
-
-def task_to_db_params(task: Any) -> Dict[str, Any]:
-    """Map extracted task fields (eqp/chamber/lot/slot/lot_slot/date) to API params."""
-
-    data = _task_as_dict(task)
-    params = ErmapQueryParams(
-        main_eqp_id=data.get("eqp_id"),
-        eqp_id=data.get("chamber_id"),
-        lot_id=data.get("lot_id"),
-        unit_id=data.get("slot"),
-        lot_slot_id=data.get("lot_slot_id"),
-        start_date=data.get("start_date"),
-        end_date=data.get("end_date"),
-    )
-    return params.model_dump(exclude_none=True)
-
-
-def tasks_to_db_params(tasks: Sequence[Any]) -> List[Dict[str, Any]]:
-    return [task_to_db_params(task) for task in tasks]
-
-
 def rows_to_dicts(rows: Sequence[ErmapQueryRow]) -> List[Dict[str, Any]]:
     return [row.model_dump(exclude_none=True) for row in rows]
 
 
 def rows_from_dicts(raw_rows: Sequence[Dict[str, Any]]) -> List[ErmapQueryRow]:
     return [ErmapQueryRow.model_validate(row) for row in raw_rows]
-
-
-def _mock_rows(params: Dict[str, Any]) -> List[ErmapQueryRow]:
-    chamber = (params.get("eqp_id") or "EFG4803_PM1").upper()
-    equipment = (params.get("main_eqp_id") or chamber.split("_")[0]).upper()
-    lot_id = (params.get("lot_id") or "N4ABC12345").upper()
-    slot = params.get("unit_id") or "3"
-
-    rows = [
-        ErmapQueryRow(
-            eqp_id=chamber,
-            main_eqp_id=equipment,
-            eqp_recipe_id="RCP_A",
-            oper_desc="MAIN",
-            lot_id=lot_id,
-            unit_id=slot,
-            type="2",
-            side_info="front_side",
-        ),
-        ErmapQueryRow(
-            eqp_id=chamber,
-            main_eqp_id=equipment,
-            eqp_recipe_id="RCP_B",
-            oper_desc="CLEAN",
-            lot_id=lot_id,
-            unit_id=str(int(slot) + 1) if str(slot).isdigit() else "4",
-            type="2",
-            side_info="backside",
-        ),
-        ErmapQueryRow(
-            eqp_id=chamber,
-            main_eqp_id=equipment,
-            eqp_recipe_id="RCP_C",
-            oper_desc="STRIP",
-            lot_id="N6XYZ99999",
-            unit_id="1",
-            type="1",
-            side_info="front_side",
-        ),
-    ]
-
-    filtered = rows
-    if params.get("lot_id"):
-        matched = [row for row in filtered if row.lot_id == params["lot_id"].upper()]
-        if matched:
-            filtered = matched
-    if params.get("eqp_id"):
-        matched = [row for row in filtered if row.eqp_id == params["eqp_id"].upper()]
-        if matched:
-            filtered = matched
-    if params.get("unit_id"):
-        matched = [row for row in filtered if row.unit_id == str(params["unit_id"])]
-        if matched:
-            filtered = matched
-    return filtered
-
-
-def query_ermap_api(
-    tasks: Sequence[Dict[str, Any]],
-    *,
-    api_url: Optional[str] = None,
-    timeout_sec: float = DEFAULT_API_TIMEOUT_SEC,
-    headers: Optional[Dict[str, str]] = None,
-) -> List[ErmapQueryRow]:
-    query_dicts = tasks_to_db_params(tasks)
-    if not query_dicts:
-        return []
-
-    resolved_url = api_url or os.environ.get("ERMAP_QUERY_API_URL")
-    if not resolved_url:
-        merged: List[ErmapQueryRow] = []
-        seen: set[tuple[Any, ...]] = set()
-        for params in query_dicts:
-            for row in _mock_rows(params):
-                key = tuple(row.model_dump().items())
-                if key in seen:
-                    continue
-                seen.add(key)
-                merged.append(row)
-        return merged
-
-    payload = ErmapQueryRequest(
-        queries=[ErmapQueryParams.model_validate(item) for item in query_dicts]
-    )
-    response = requests.post(
-        resolved_url,
-        json=payload.model_dump(),
-        headers=headers or {},
-        timeout=timeout_sec,
-    )
-    response.raise_for_status()
-    body = response.json()
-
-    if isinstance(body, dict) and "rows" in body:
-        return ErmapQueryResponse.model_validate(body).rows
-    if isinstance(body, list):
-        return rows_from_dicts(body)
-    raise ValueError(f"Unexpected ER MAP API response: {type(body)!r}")
 
 
 def format_query_results_message(rows: Sequence[ErmapQueryRow]) -> str:
