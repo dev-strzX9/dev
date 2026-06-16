@@ -18,7 +18,18 @@ DATE_OUTPUT_FORMAT = "%Y-%m-%d"
 DATE_INPUT_FORMATS = ("%Y-%m-%d", "%Y%m%d", "%Y-%m-%d %H:%M", "%Y/%m/%d")
 REFERENCE_DATE_FORMATS = DATE_INPUT_FORMATS
 
-Phase = Literal["started", "extracted", "validated", "extraction_failed"]
+Phase = Literal[
+    "started",
+    "extracted",
+    "validated",
+    "extraction_failed",
+    "queried",
+    "no_results",
+    "awaiting_selection",
+    "selected",
+    "selection_failed",
+    "completed",
+]
 
 _IDENTIFIER_FIELDS = ("eqp_id", "chamber_id", "lot_id", "lot_slot_id", "slot")
 
@@ -190,6 +201,9 @@ class AgentState(TypedDict, total=False):
     user_query: str
     reference_date: str
     extracted_entities: Dict[str, Any]
+    query_results: List[Dict[str, Any]]
+    filtered_results: List[Dict[str, Any]]
+    artifact: Dict[str, Any]
     phase: Phase
     message: str
 
@@ -270,6 +284,7 @@ def _task_has_query_identifier(task: Dict[str, Any]) -> bool:
         or task.get("chamber_id")
         or task.get("lot_id")
         or task.get("lot_slot_id")
+        or task.get("slot")
     )
 
 
@@ -419,14 +434,3 @@ def repair_task_identifiers_node(state: AgentState) -> Dict[str, Any]:
         "phase": "validated",
         "message": message,
     }
-
-
-def get_db_query_node(state: AgentState) -> Dict[str, Any]:
-    """추후 업데이트 예정"""
-    return None
-
-def scaler_node(state: AgentState) -> Dict[str, Any]:
-    """추후 업데이트 예정"""
-    return None 
-
-    

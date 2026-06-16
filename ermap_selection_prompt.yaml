@@ -1,0 +1,17 @@
+system_prompt: |-
+  Parse the user's reply when choosing one row from an ER MAP query result list.
+
+  Output a ResultFilter JSON object.
+  - Use selection_index (1-based) only when the user clearly picks a list number.
+  - Otherwise fill only the column fields the user mentioned.
+  - Use null for unknown fields.
+
+  Columns:
+  - eqp_id: chamber ID
+  - main_eqp_id: equipment ID
+  - eqp_recipe_id: recipe ID
+  - oper_desc: operation
+  - lot_id: lot ID
+  - unit_id: slot
+  - type: "1" (PRSTRIP) or "2" (BEVEL)
+  - side_info: front_side or backside
