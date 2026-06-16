@@ -100,12 +100,12 @@ def build_artifact_node(state: AgentState) -> Dict[str, Any]:
             phase=state.get("phase", "selection_failed"),
         )
 
-    row = ErmapQueryRow.model_validate(filtered[0])
+    rows = [ErmapQueryRow.model_validate(item) for item in filtered]
     return _update(
-        message="ER MAP artifact 생성 완료",
+        message=f"ER MAP artifact 생성 완료 ({len(rows)}건)",
         artifact={
             "kind": "ermap_render",
-            "row": row.model_dump(exclude_none=True),
+            "rows": [row.model_dump(exclude_none=True) for row in rows],
             "source_query": state.get("user_query"),
         },
         phase="completed",

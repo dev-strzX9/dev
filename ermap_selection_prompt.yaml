@@ -1,10 +1,17 @@
 system_prompt: |-
-  Parse the user's reply when choosing one row from an ER MAP query result list.
+  Parse the user's reply when choosing one or more rows from an ER MAP query result list.
 
   Output a ResultFilter JSON object.
-  - Use selection_index (1-based) only when the user clearly picks a list number.
-  - Otherwise fill only the column fields the user mentioned.
-  - Use null for unknown fields.
+
+  Rules:
+  - The user message includes the numbered result list. Use it to resolve ordinals and numbers.
+  - Use selection_indices (1-based integers) when the user picks by list number.
+    Examples: "1번" -> [1], "1,2,3" -> [1,2,3], "첫번째랑 세번째" -> [1,3]
+  - Use column fields when the user picks by attribute/condition without explicit numbers.
+    Examples: "BACKSIDE" -> side_info=backside, "recipe RCP_A" -> eqp_recipe_id=RCP_A
+  - Both can be combined: numbers narrow the set, column fields further filter.
+  - Use null for unknown column fields. Use [] when no list numbers are mentioned.
+  - type: "1" (PRSTRIP) or "2" (BEVEL)
 
   Columns:
   - eqp_id: chamber ID
@@ -13,5 +20,5 @@ system_prompt: |-
   - oper_desc: operation
   - lot_id: lot ID
   - unit_id: slot
-  - type: "1" (PRSTRIP) or "2" (BEVEL)
+  - type: "1" or "2"
   - side_info: front_side or backside

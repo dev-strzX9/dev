@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -11,8 +10,6 @@ from pydantic import BaseModel, Field
 
 from llm_api import chat_structured
 
-_KOREAN_ORDINALS = {"첫": 1, "첫번째": 1, "두": 2, "두번째": 2, "둘": 2, "세": 3, "세번째": 3}
-_ENGLISH_ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4}
 _TYPE_LABELS = {"1": "PRSTRIP", "2": "BEVEL"}
 
 _FILTER_FIELDS = (
@@ -41,15 +38,20 @@ class ErmapQueryRow(BaseModel):
 
 
 class ResultFilter(BaseModel):
-    selection_index: Optional[int] = Field(default=None, ge=1)
-    eqp_id: Optional[str] = None
-    main_eqp_id: Optional[str] = None
-    eqp_recipe_id: Optional[str] = None
-    oper_desc: Optional[str] = None
-    lot_id: Optional[str] = None
-    unit_id: Optional[str] = None
-    type: Optional[str] = None
-    side_info: Optional[str] = None
+    """LLM-parsed user selection: list numbers and/or column conditions."""
+
+    selection_indices: List[int] = Field(
+        default_factory=list,
+        description="1-based list numbers. Supports multiple e.g. [1, 2, 3].",
+    )
+    eqp_id: Optional[str] = Field(default=None, description="Chamber ID")
+    main_eqp_id: Optional[str] = Field(default=None, description="Equipment ID")
+    eqp_recipe_id: Optional[str] = Field(default=None, description="Recipe ID")
+    oper_desc: Optional[str] = Field(default=None, description="Operation")
+    lot_id: Optional[str] = Field(default=None, description="Lot ID")
+    unit_id: Optional[str] = Field(default=None, description="Slot")
+    type: Optional[str] = Field(default=None, description='1=PRSTRIP, 2=BEVEL')
+    side_info: Optional[str] = Field(default=None, description="front_side or backside")
 
 
 def rows_to_dicts(rows: Sequence[ErmapQueryRow]) -> List[Dict[str, Any]]:
@@ -61,7 +63,10 @@ def rows_from_dicts(raw_rows: Sequence[Dict[str, Any]]) -> List[ErmapQueryRow]:
 
 
 def format_query_results_message(rows: Sequence[ErmapQueryRow]) -> str:
-    lines = [f"조회 결과 {len(rows)}건입니다. 번호를 고르거나 조건으로 말씀해 주세요.", ""]
+    lines = [
+        f"조회 결과 {len(rows)}건입니다. 번호(복수 가능) 또는 컬럼 조건으로 선택해 주세요.",
+        "",
+    ]
     for index, row in enumerate(rows, start=1):
         type_label = _TYPE_LABELS.get(row.type or "", row.type or "-")
         lines.append(
@@ -73,68 +78,67 @@ def format_query_results_message(rows: Sequence[ErmapQueryRow]) -> str:
     return "\n".join(lines)
 
 
-def parse_selection_index(text: str) -> Optional[int]:
-    cleaned = text.strip()
-    if not cleaned:
-        return None
-    match = re.search(r"(?<!\d)(\d{1,2})\s*(?:번|번째)?(?!\d)", cleaned)
-    if match:
-        return int(match.group(1))
-    lowered = cleaned.lower()
-    for token, index in _ENGLISH_ORDINALS.items():
-        if re.search(rf"\b{re.escape(token)}\b", lowered):
-            return index
-    compact = re.sub(r"\s+", "", cleaned)
-    for token, index in _KOREAN_ORDINALS.items():
-        if token in compact:
-            return index
-    return None
+def _has_column_filters(result_filter: ResultFilter) -> bool:
+    return bool(
+        result_filter.model_dump(exclude_none=True, exclude={"selection_indices"})
+    )
+
+
+def _row_matches_column_filter(row: ErmapQueryRow, result_filter: ResultFilter) -> bool:
+    for filter_field, row_field, contains in _FILTER_FIELDS:
+        filter_value = getattr(result_filter, filter_field)
+        if filter_value is None:
+            continue
+        row_value = getattr(row, row_field)
+        if row_value is None:
+            return False
+        row_text = str(row_value).strip().lower()
+        filter_text = str(filter_value).strip().lower()
+        if contains:
+            if filter_text not in row_text:
+                return False
+        elif row_text != filter_text:
+            return False
+    return True
 
 
 def apply_result_filter(
     rows: Sequence[ErmapQueryRow],
     result_filter: ResultFilter,
 ) -> List[ErmapQueryRow]:
-    if result_filter.selection_index is not None:
-        index = result_filter.selection_index - 1
-        if 0 <= index < len(rows):
-            return [rows[index]]
-        return []
-
-    if not result_filter.model_dump(exclude_none=True, exclude={"selection_index"}):
-        return []
-
-    matched: List[ErmapQueryRow] = []
-    for row in rows:
-        ok = True
-        for filter_field, row_field, contains in _FILTER_FIELDS:
-            filter_value = getattr(result_filter, filter_field)
-            if filter_value is None:
+    if result_filter.selection_indices:
+        candidates: List[ErmapQueryRow] = []
+        seen: set[int] = set()
+        for index in result_filter.selection_indices:
+            if index < 1:
                 continue
-            row_value = getattr(row, row_field)
-            if row_value is None:
-                ok = False
-                break
-            row_text = str(row_value).strip().lower()
-            filter_text = str(filter_value).strip().lower()
-            if contains:
-                if filter_text not in row_text:
-                    ok = False
-                    break
-            elif row_text != filter_text:
-                ok = False
-                break
-        if ok:
-            matched.append(row)
-    return matched
+            position = index - 1
+            if position >= len(rows) or position in seen:
+                continue
+            seen.add(position)
+            candidates.append(rows[position])
+    else:
+        candidates = list(rows)
+
+    if not _has_column_filters(result_filter):
+        return candidates
+
+    return [row for row in candidates if _row_matches_column_filter(row, result_filter)]
 
 
-def extract_result_filter_llm(user_reply: str) -> ResultFilter:
+def extract_result_filter_llm(
+    user_reply: str,
+    rows: Sequence[ErmapQueryRow],
+) -> ResultFilter:
     prompt_path = Path(__file__).with_name("ermap_selection_prompt.yaml")
     prompt_config = yaml.safe_load(prompt_path.read_text(encoding="utf-8"))
+    user_content = (
+        f"{format_query_results_message(rows)}\n\n"
+        f"사용자 선택: {user_reply.strip()}"
+    )
     parsed = chat_structured(
         system_prompt=prompt_config["system_prompt"],
-        user_content=user_reply,
+        user_content=user_content,
         response_model=ResultFilter,
     )
     if isinstance(parsed, ResultFilter):
@@ -146,16 +150,14 @@ def resolve_user_selection(
     user_reply: str,
     rows: Sequence[ErmapQueryRow],
 ) -> tuple[List[ErmapQueryRow], str]:
-    index = parse_selection_index(user_reply)
-    if index is not None:
-        selected = apply_result_filter(rows, ResultFilter(selection_index=index))
-        if selected:
-            return selected, f"{index}번 항목을 선택했습니다."
-        return [], f"{index}번은 목록 범위를 벗어났습니다."
+    if not user_reply.strip():
+        return [], "선택 입력이 비어 있습니다."
 
-    selected = apply_result_filter(rows, extract_result_filter_llm(user_reply))
-    if len(selected) == 1:
-        return selected, "조건에 맞는 항목 1건을 선택했습니다."
+    result_filter = extract_result_filter_llm(user_reply, rows)
+    selected = apply_result_filter(rows, result_filter)
+
     if not selected:
-        return [], "조건에 맞는 항목이 없습니다."
-    return [], f"조건에 맞는 항목이 {len(selected)}건입니다. 번호를 지정해 주세요."
+        return [], "선택 조건에 맞는 항목이 없습니다."
+    if len(selected) == 1:
+        return selected, "1건을 선택했습니다."
+    return selected, f"{len(selected)}건을 선택했습니다."
