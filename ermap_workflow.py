@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import uuid
+from typing import Any, Dict, Optional, Tuple
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -27,16 +28,60 @@ def _update(*, message: str, **fields: Any) -> Dict[str, Any]:
     return {"message": message, **fields}
 
 
-def make_thread_id(user_id: str, chat_id: str) -> str:
-    return f"{user_id}:{chat_id}"
+def generate_session_uuid() -> str:
+    return str(uuid.uuid4())
 
 
-def make_config(user_id: str, chat_id: str) -> Dict[str, Any]:
-    return {"configurable": {"thread_id": make_thread_id(user_id, chat_id)}}
+def make_thread_id(emp_no: str, session_uuid: str) -> str:
+    """LangGraph checkpointer thread_id. Format: `{emp_no}:{uuid}`."""
+    return f"{emp_no}:{session_uuid}"
+
+
+def create_thread_id(emp_no: str) -> Tuple[str, str]:
+    """새 대화 session UUID 생성 후 (thread_id, session_uuid) 반환."""
+    session_uuid = generate_session_uuid()
+    return make_thread_id(emp_no, session_uuid), session_uuid
+
+
+def make_config(emp_no: str, session_uuid: str) -> Dict[str, Any]:
+    return make_config_from_thread_id(make_thread_id(emp_no, session_uuid))
+
+
+def make_config_from_thread_id(thread_id: str) -> Dict[str, Any]:
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def parse_thread_id(thread_id: str) -> Tuple[str, str]:
+    emp_no, session_uuid = thread_id.split(":", 1)
+    if not emp_no or not session_uuid:
+        raise ValueError(f"Invalid thread_id: {thread_id!r}")
+    return emp_no, session_uuid
+
+
+def thread_id_matches_emp_no(thread_id: str, emp_no: str) -> bool:
+    try:
+        parsed_emp_no, _ = parse_thread_id(thread_id)
+    except ValueError:
+        return False
+    return parsed_emp_no == emp_no
 
 
 def is_awaiting_resume(graph: Any, config: Dict[str, Any]) -> bool:
     return bool(graph.get_state(config).next)
+
+
+def get_selection_interrupt_payload(graph: Any, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """HITL interrupt payload (목록 message 등). 대기 중이 아니면 None."""
+    snapshot = graph.get_state(config)
+    interrupts = getattr(snapshot, "interrupts", None) or []
+    if not interrupts:
+        return None
+
+    first = interrupts[0]
+    value = first.value if hasattr(first, "value") else first
+    if isinstance(value, dict):
+        return value
+    return {"message": str(value)}
 
 
 def selection_node(state: AgentState) -> Dict[str, Any]:
