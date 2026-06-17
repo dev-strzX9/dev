@@ -1,10 +1,10 @@
-"""ER MAP FastAPI router — graph는 여기서 import해서 사용."""
+"""FastAPI app: ermap_workflow.graph import 후 라우터에서 invoke."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from ermap_workflow import (
@@ -80,3 +80,7 @@ def chat(body: ErmapChatRequest) -> ErmapChatResponse:
         phase=result.get("phase"),
         result=result,
     )
+
+
+app = FastAPI(title="ER MAP Agent API")
+app.include_router(router)
