@@ -18,6 +18,7 @@ ERMAP_RESULT_COLUMNS = [
     "unit_id",        # slot
     "type",
     "side_info",
+    "date_time",      # YYYY-MM-DD HH:MM:SS
 ]
 
 

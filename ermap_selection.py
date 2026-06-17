@@ -19,6 +19,7 @@ _FILTER_FIELDS = (
     ("unit_id", "unit_id", False),
     ("type", "type", False),
     ("side_info", "side_info", False),
+    ("date_time", "date_time", True),
 )
 
 
@@ -33,6 +34,10 @@ class ErmapQueryRow(BaseModel):
     unit_id: Optional[str] = None
     type: Optional[str] = None
     side_info: Optional[str] = None
+    date_time: Optional[str] = Field(
+        default=None,
+        description='Process datetime, e.g. "2024-03-24 09:34:10"',
+    )
 
 
 class ResultFilter(BaseModel):
@@ -50,6 +55,10 @@ class ResultFilter(BaseModel):
     unit_id: Optional[str] = Field(default=None, description="Slot")
     type: Optional[str] = Field(default=None, description="PRSTRIP or BEVEL")
     side_info: Optional[str] = Field(default=None, description="front_side or backside")
+    date_time: Optional[str] = Field(
+        default=None,
+        description='Datetime filter, e.g. "2024-03-24" or "09:34"',
+    )
 
 
 def rows_to_dicts(rows: Sequence[ErmapQueryRow]) -> List[Dict[str, Any]]:
@@ -70,7 +79,8 @@ def format_query_results_message(rows: Sequence[ErmapQueryRow]) -> str:
             f"{index}. chamber={row.eqp_id} | equip={row.main_eqp_id} | "
             f"recipe={row.eqp_recipe_id or '-'} | oper={row.oper_desc or '-'} | "
             f"lot={row.lot_id or '-'} | slot={row.unit_id or '-'} | "
-            f"type={row.type or '-'} | side={row.side_info or '-'}"
+            f"type={row.type or '-'} | side={row.side_info or '-'} | "
+            f"date_time={row.date_time or '-'}"
         )
     return "\n".join(lines)
 

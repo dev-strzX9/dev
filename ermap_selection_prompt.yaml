@@ -21,3 +21,4 @@ system_prompt: |-
   - unit_id: slot
   - type: PRSTRIP or BEVEL (as stored in DB)
   - side_info: front_side or backside
+  - date_time: process datetime string, e.g. "2024-03-24 09:34:10"
