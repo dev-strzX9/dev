@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -28,42 +28,31 @@ def _update(*, message: str, **fields: Any) -> Dict[str, Any]:
     return {"message": message, **fields}
 
 
-def generate_session_uuid() -> str:
-    return str(uuid.uuid4())
-
-
 def make_thread_id(emp_no: str, session_uuid: str) -> str:
     """LangGraph checkpointer thread_id. Format: `{emp_no}:{uuid}`."""
     return f"{emp_no}:{session_uuid}"
 
 
-def create_thread_id(emp_no: str) -> Tuple[str, str]:
-    """새 대화 session UUID 생성 후 (thread_id, session_uuid) 반환."""
-    session_uuid = generate_session_uuid()
-    return make_thread_id(emp_no, session_uuid), session_uuid
+def resolve_thread_id(emp_no: str, thread_id: Optional[str] = None) -> str:
+    """thread_id 없으면 uuid 생성. 있으면 그대로 사용(접두사 emp_no 검증)."""
+    emp_no = emp_no.strip()
+    if not emp_no:
+        raise ValueError("emp_no is required")
 
+    if thread_id and thread_id.strip():
+        resolved = thread_id.strip()
+        if ":" in resolved:
+            prefix, _ = resolved.split(":", 1)
+            if prefix != emp_no:
+                raise ValueError("thread_id emp_no mismatch")
+            return resolved
+        return make_thread_id(emp_no, resolved)
 
-def make_config(emp_no: str, session_uuid: str) -> Dict[str, Any]:
-    return make_config_from_thread_id(make_thread_id(emp_no, session_uuid))
+    return make_thread_id(emp_no, str(uuid.uuid4()))
 
 
 def make_config_from_thread_id(thread_id: str) -> Dict[str, Any]:
     return {"configurable": {"thread_id": thread_id}}
-
-
-def parse_thread_id(thread_id: str) -> Tuple[str, str]:
-    emp_no, session_uuid = thread_id.split(":", 1)
-    if not emp_no or not session_uuid:
-        raise ValueError(f"Invalid thread_id: {thread_id!r}")
-    return emp_no, session_uuid
-
-
-def thread_id_matches_emp_no(thread_id: str, emp_no: str) -> bool:
-    try:
-        parsed_emp_no, _ = parse_thread_id(thread_id)
-    except ValueError:
-        return False
-    return parsed_emp_no == emp_no
 
 
 def is_awaiting_resume(graph: Any, config: Dict[str, Any]) -> bool:
