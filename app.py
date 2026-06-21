@@ -64,7 +64,7 @@ def chat(body: ErmapChatRequest) -> ErmapChatResponse:
         result = graph.invoke(payload, config)
 
     if is_awaiting_resume(graph, config):
-        selection = get_selection_interrupt_payload(graph, config) or {}
+        selection = get_selection_interrupt_payload(graph, config, invoke_result=result) or {}
         return ErmapChatResponse(
             thread_id=thread_id,
             status="awaiting_selection",

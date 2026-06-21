@@ -59,18 +59,43 @@ def is_awaiting_resume(graph: Any, config: Dict[str, Any]) -> bool:
     return bool(graph.get_state(config).next)
 
 
-def get_selection_interrupt_payload(graph: Any, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _interrupt_payload_from_value(value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, dict):
+        if "message" in value or "phase" in value or "count" in value:
+            return value
+        nested = value.get("value")
+        if isinstance(nested, dict):
+            return nested
+    return None
+
+
+def _interrupts_from_invoke_result(invoke_result: Optional[Dict[str, Any]]) -> list[Any]:
+    if not invoke_result:
+        return []
+    raw = invoke_result.get("__interrupt__")
+    if not raw:
+        return []
+    return list(raw)
+
+
+def get_selection_interrupt_payload(
+    graph: Any,
+    config: Dict[str, Any],
+    *,
+    invoke_result: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     """HITL interrupt payload (목록 message 등). 대기 중이 아니면 None."""
     snapshot = graph.get_state(config)
-    interrupts = getattr(snapshot, "interrupts", None) or []
+    interrupts = list(getattr(snapshot, "interrupts", None) or [])
+    if not interrupts:
+        interrupts = _interrupts_from_invoke_result(invoke_result)
     if not interrupts:
         return None
 
     first = interrupts[0]
-    value = first.value if hasattr(first, "value") else first
-    if isinstance(value, dict):
-        return value
-    return {"message": str(value)}
+    if hasattr(first, "value"):
+        return _interrupt_payload_from_value(first.value)
+    return _interrupt_payload_from_value(first)
 
 
 def selection_node(state: AgentState) -> Dict[str, Any]:
