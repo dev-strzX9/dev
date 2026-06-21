@@ -66,10 +66,6 @@ def _interrupt_payload_from_value(value: Any) -> Optional[Dict[str, Any]]:
         nested = value.get("value")
         if isinstance(nested, dict):
             return nested
-        if nested is not None:
-            return {"message": str(nested)}
-    if value is not None:
-        return {"message": str(value)}
     return None
 
 
