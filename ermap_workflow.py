@@ -28,27 +28,14 @@ def _update(*, message: str, **fields: Any) -> Dict[str, Any]:
     return {"message": message, **fields}
 
 
-def make_thread_id(emp_no: str, session_uuid: str) -> str:
-    """LangGraph checkpointer thread_id. Format: `{emp_no}:{uuid}`."""
-    return f"{emp_no}:{session_uuid}"
-
-
 def resolve_thread_id(emp_no: str, thread_id: Optional[str] = None) -> str:
-    """thread_id 없으면 uuid 생성. 있으면 그대로 사용(접두사 emp_no 검증)."""
+    """thread_id 없으면 `{emp_no}:{uuid}` 생성. 있으면 그대로 사용."""
     emp_no = emp_no.strip()
     if not emp_no:
         raise ValueError("emp_no is required")
-
     if thread_id and thread_id.strip():
-        resolved = thread_id.strip()
-        if ":" in resolved:
-            prefix, _ = resolved.split(":", 1)
-            if prefix != emp_no:
-                raise ValueError("thread_id emp_no mismatch")
-            return resolved
-        return make_thread_id(emp_no, resolved)
-
-    return make_thread_id(emp_no, str(uuid.uuid4()))
+        return thread_id.strip()
+    return f"{emp_no}:{uuid.uuid4()}"
 
 
 def make_config_from_thread_id(thread_id: str) -> Dict[str, Any]:
