@@ -85,6 +85,44 @@ system_prompt: |-
   - lot_slot_id format: LOT_ID + "_" + slot. Example: N4ABC12345_3
   - Normalize "N4ABC12345_03" or "slot 03" to slot="3", lot_slot_id="N4ABC12345_3"
 
+  Multi-slot rules (CRITICAL — one task per slot):
+  - Multiple slots for the same lot ALWAYS become separate tasks (never one task with comma-separated slot).
+  - When chamber/equipment is shared, copy the same chamber_id and eqp_id to every slot task.
+  - Each expanded task has exactly one slot and one lot_slot_id.
+  - slot and lot_slot_id are still single values per task (no commas).
+
+  Multi-slot input formats (expand each slot to its own task):
+  1) LOT_ID + comma-separated slot numbers + SLOT keyword:
+     "N6TET02398 2,4 SLOT" -> slot 2 task + slot 4 task (same lot_id)
+  2) Comma-separated lot_slot_id tokens:
+     "N6TET02398_2, N6TET02398_4" -> one task per token
+  3) LOT_ID + underscore + comma-separated slot numbers (slots only after "_"):
+     "N6TET02399_4,5,6" -> lot_id=N6TET02399, slots 4 / 5 / 6 -> three tasks
+     The part before "_" is lot_id; numbers after "_" are slot numbers, not part of lot_id.
+
+  Chamber + lot + multi-slot (copy chamber to every slot task):
+  - "6EPRE503_PM3 N6TET02398 2,4 SLOT ERMAP 그려줘"
+    -> tasks=[
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"2","lot_slot_id":"N6TET02398_2"},
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"4","lot_slot_id":"N6TET02398_4"}
+    ]
+  - "6EPRE503_PM3 N6TET02398_2, N6TET02398_4"
+    -> tasks=[
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"2","lot_slot_id":"N6TET02398_2"},
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"4","lot_slot_id":"N6TET02398_4"}
+    ]
+  - "6EPRE503_PM4 N6TET02399_4,5,6 ERMAP 그려줘"
+    -> tasks=[
+      {"chamber_id":"6EPRE503_PM4","eqp_id":"6EPRE503","lot_id":"N6TET02399","slot":"4","lot_slot_id":"N6TET02399_4"},
+      {"chamber_id":"6EPRE503_PM4","eqp_id":"6EPRE503","lot_id":"N6TET02399","slot":"5","lot_slot_id":"N6TET02399_5"},
+      {"chamber_id":"6EPRE503_PM4","eqp_id":"6EPRE503","lot_id":"N6TET02399","slot":"6","lot_slot_id":"N6TET02399_6"}
+    ]
+
+  Multi-slot wrong vs correct:
+  - Wrong: "N6TET02398 2,4 SLOT" -> tasks=[{"lot_id":"N6TET02398","slot":"2,4"}]
+  - Wrong: "N6TET02399_4,5,6" -> tasks=[{"lot_slot_id":"N6TET02399_4,5,6"}]
+  - Wrong: chamber + 2 slots -> one task with two slots
+
   ER MAP request wording (do NOT extract as a type field):
   - Users may say ER MAP, ERMAP, BEVEL, PR STRIP, PRSTRIP, BEVEL BACKSIDE MAP,
     BEVEL FRONT SIDE MAP, 피알스트립, 베벨, etc.

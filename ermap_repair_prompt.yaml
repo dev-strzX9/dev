@@ -55,6 +55,14 @@ system_prompt: |-
   Lot + slot rules:
   - When both lot and slot appear, fill lot_id, slot, and lot_slot_id.
   - Accept forms like "N4ABC12345_3" or "N4ABC12345 SLOT 3".
+  - Stage 1 should already split multiple slots into separate tasks. Repair fills identifiers per task.
+  - Match slot number to each task by order when the user lists multiple slots.
+
+  Multi-slot formats (stage 1 splits; repair fills each task):
+  1) "LOT_ID 2,4 SLOT" -> task1 slot=2, task2 slot=4 (same lot_id)
+  2) "LOT_ID_2, LOT_ID_4" -> one lot_slot_id per task
+  3) "LOT_ID_4,5,6" -> lot_id=LOT_ID, slots 4/5/6 in order across tasks
+  - Shared chamber_id/eqp_id from the query apply to every slot task.
 
   Multi-task assignment:
   - If one identifier applies to multiple tasks (e.g. "24일과 25일 EKE0104"), copy the same identifier to every task that needs it.
@@ -100,3 +108,25 @@ system_prompt: |-
   Input user_query: "N4ABC12345_3 PR STRIP"
   Input tasks: [{}]
   Output tasks: [{"lot_id":"N4ABC12345","slot":"3","lot_slot_id":"N4ABC12345_3"}]
+
+  Input user_query: "6EPRE503_PM3 N6TET02398 2,4 SLOT ERMAP 그려줘"
+  Input tasks: [{}, {}]
+  Output tasks: [
+    {"eqp_id":"6EPRE503","chamber_id":"6EPRE503_PM3","lot_id":"N6TET02398","slot":"2","lot_slot_id":"N6TET02398_2"},
+    {"eqp_id":"6EPRE503","chamber_id":"6EPRE503_PM3","lot_id":"N6TET02398","slot":"4","lot_slot_id":"N6TET02398_4"}
+  ]
+
+  Input user_query: "6EPRE503_PM3 N6TET02398_2, N6TET02398_4"
+  Input tasks: [{}, {}]
+  Output tasks: [
+    {"eqp_id":"6EPRE503","chamber_id":"6EPRE503_PM3","lot_id":"N6TET02398","slot":"2","lot_slot_id":"N6TET02398_2"},
+    {"eqp_id":"6EPRE503","chamber_id":"6EPRE503_PM3","lot_id":"N6TET02398","slot":"4","lot_slot_id":"N6TET02398_4"}
+  ]
+
+  Input user_query: "6EPRE503_PM4 N6TET02399_4,5,6 ERMAP 그려줘"
+  Input tasks: [{}, {}, {}]
+  Output tasks: [
+    {"eqp_id":"6EPRE503","chamber_id":"6EPRE503_PM4","lot_id":"N6TET02399","slot":"4","lot_slot_id":"N6TET02399_4"},
+    {"eqp_id":"6EPRE503","chamber_id":"6EPRE503_PM4","lot_id":"N6TET02399","slot":"5","lot_slot_id":"N6TET02399_5"},
+    {"eqp_id":"6EPRE503","chamber_id":"6EPRE503_PM4","lot_id":"N6TET02399","slot":"6","lot_slot_id":"N6TET02399_6"}
+  ]
