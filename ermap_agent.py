@@ -33,6 +33,31 @@ Phase = Literal[
 
 _IDENTIFIER_FIELDS = ("eqp_id", "chamber_id", "lot_id", "lot_slot_id", "slot")
 
+_LOT_ID_RE = r"(?:N[1456][A-Z]{3}\d{5}|E1T\d{4})"
+_CHAMBER_RE = r"(?:\d[A-Z]{3,5}|[A-Z]{3,4})\d{3,4}_[A-Z]{1,2}[1-8]?"
+_LOT_UNDERSCORE_MULTI_SLOT_RE = re.compile(
+    rf"(?<![A-Z0-9_])({_LOT_ID_RE})_(\d+(?:,\d+)+)(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
+_LOT_SPACE_MULTI_SLOT_RE = re.compile(
+    rf"(?<![A-Z0-9_])({_LOT_ID_RE})\s+(\d+(?:\s*,\s*\d+)+)(?:번)?(?:\s*(?:슬롯|SLOT))",
+    re.IGNORECASE,
+)
+_CHAMBER_LOT_MULTI_SLOT_GROUP_RE = re.compile(
+    rf"(?:장비\s+)?(?P<chamber>{_CHAMBER_RE})\s+"
+    rf"(?:랏\s+)?(?P<lot>{_LOT_ID_RE})\s+"
+    rf"(?P<slots>\d+(?:\s*,\s*\d+)+)(?:번)?(?:\s*(?:슬롯|SLOT))?",
+    re.IGNORECASE,
+)
+_LOT_SLOT_TOKEN_RE = re.compile(
+    rf"(?<![A-Z0-9_])({_LOT_ID_RE})_(\d+)(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
+_CHAMBER_TOKEN_RE = re.compile(
+    rf"(?<![A-Z0-9_])({_CHAMBER_RE})(?![A-Z0-9_])",
+    re.IGNORECASE,
+)
+
 
 def _normalize_date_string(value: Any) -> Optional[str]:
     if value is None:
@@ -103,6 +128,156 @@ def _coerce_lot_slot_fields(task: Dict[str, Any]) -> Dict[str, Any]:
             task[key] = _normalize_date_string(task[key])
 
     return task
+
+
+def _find_chamber_and_eqp(user_query: str) -> tuple[Optional[str], Optional[str]]:
+    match = _CHAMBER_TOKEN_RE.search(user_query.upper())
+    if not match:
+        return None, None
+    chamber_id = match.group(1).upper()
+    return chamber_id, chamber_id.split("_", 1)[0]
+
+
+def _parse_chamber_lot_slot_groups(user_query: str) -> List[Dict[str, Any]]:
+    groups: List[Dict[str, Any]] = []
+    for match in _CHAMBER_LOT_MULTI_SLOT_GROUP_RE.finditer(user_query):
+        chamber_id = match.group("chamber").upper()
+        lot_id = match.group("lot").upper()
+        slots = [
+            str(int(slot.strip()))
+            for slot in re.split(r"\s*,\s*", match.group("slots"))
+        ]
+        groups.append(
+            {
+                "chamber_id": chamber_id,
+                "eqp_id": chamber_id.split("_", 1)[0],
+                "lot_id": lot_id,
+                "slots": slots,
+            }
+        )
+    return groups
+
+
+def _expand_tasks_from_groups(
+    groups: List[Dict[str, Any]],
+    tasks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    template: Dict[str, Any] = {}
+    if tasks:
+        for key in ("start_date", "end_date"):
+            if tasks[0].get(key):
+                template[key] = tasks[0][key]
+
+    expanded: List[Dict[str, Any]] = []
+    for group in groups:
+        for slot in group["slots"]:
+            task = dict(template)
+            task["chamber_id"] = group["chamber_id"]
+            task["eqp_id"] = group["eqp_id"]
+            task["lot_id"] = group["lot_id"]
+            task["slot"] = slot
+            task["lot_slot_id"] = f"{group['lot_id']}_{slot}"
+            expanded.append(_coerce_lot_slot_fields(task))
+
+    return expanded
+
+
+def _parse_slot_pairs_from_query(user_query: str) -> List[tuple[str, str]]:
+    query = user_query.upper()
+
+    match = _LOT_UNDERSCORE_MULTI_SLOT_RE.search(query)
+    if match:
+        lot_id = match.group(1).upper()
+        return [
+            (lot_id, str(int(slot.strip())))
+            for slot in match.group(2).split(",")
+        ]
+
+    match = _LOT_SPACE_MULTI_SLOT_RE.search(query)
+    if match:
+        lot_id = match.group(1).upper()
+        return [
+            (lot_id, str(int(slot.strip())))
+            for slot in re.split(r"\s*,\s*", match.group(2))
+        ]
+
+    token_pairs = [
+        (lot.upper(), str(int(slot)))
+        for lot, slot in _LOT_SLOT_TOKEN_RE.findall(query)
+    ]
+    if len(token_pairs) > 1:
+        return token_pairs
+
+    return []
+
+
+def _expand_comma_slots_in_tasks(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    expanded: List[Dict[str, Any]] = []
+
+    for task in tasks:
+        slot = task.get("slot")
+        lot_id = task.get("lot_id")
+        lot_slot_id = task.get("lot_slot_id")
+
+        if slot and "," in str(slot) and lot_id:
+            for slot_text in str(slot).split(","):
+                slot_text = str(int(slot_text.strip()))
+                new_task = dict(task)
+                new_task["slot"] = slot_text
+                new_task["lot_slot_id"] = f"{lot_id}_{slot_text}"
+                expanded.append(_coerce_lot_slot_fields(new_task))
+            continue
+
+        if lot_slot_id and "," in str(lot_slot_id):
+            suffix_match = re.match(r"^(.+)_(\d+(?:,\d+)+)$", str(lot_slot_id).upper())
+            if suffix_match:
+                parsed_lot_id = suffix_match.group(1)
+                for slot_text in suffix_match.group(2).split(","):
+                    slot_text = str(int(slot_text.strip()))
+                    new_task = dict(task)
+                    new_task["lot_id"] = parsed_lot_id
+                    new_task["slot"] = slot_text
+                    new_task["lot_slot_id"] = f"{parsed_lot_id}_{slot_text}"
+                    expanded.append(_coerce_lot_slot_fields(new_task))
+                continue
+
+        expanded.append(task)
+
+    return expanded
+
+
+def _expand_multi_slot_tasks(
+    user_query: str,
+    tasks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    groups = _parse_chamber_lot_slot_groups(user_query)
+    if groups:
+        return _expand_tasks_from_groups(groups, tasks)
+
+    pairs = _parse_slot_pairs_from_query(user_query)
+    if len(pairs) <= 1:
+        return _expand_comma_slots_in_tasks(tasks)
+
+    chamber_id, eqp_id = _find_chamber_and_eqp(user_query)
+    template: Dict[str, Any] = {}
+    if tasks:
+        for key in ("start_date", "end_date", "chamber_id", "eqp_id"):
+            if tasks[0].get(key):
+                template[key] = tasks[0][key]
+
+    if chamber_id:
+        template.setdefault("chamber_id", chamber_id)
+        template.setdefault("eqp_id", eqp_id)
+
+    expanded: List[Dict[str, Any]] = []
+    for lot_id, slot in pairs:
+        task = dict(template)
+        task["lot_id"] = lot_id
+        task["slot"] = slot
+        task["lot_slot_id"] = f"{lot_id}_{slot}"
+        expanded.append(_coerce_lot_slot_fields(task))
+
+    return expanded
 
 
 class ErmapTask(BaseModel):
@@ -380,6 +555,8 @@ def extract_entities_node(state: AgentState) -> Dict[str, Any]:
     tasks = [task for task in tasks if task]
     if not tasks:
         tasks = [{}]
+
+    tasks = _expand_multi_slot_tasks(state["user_query"], tasks)
 
     _apply_default_dates(tasks, reference_date)
 

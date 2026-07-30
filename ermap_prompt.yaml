@@ -57,16 +57,16 @@ system_prompt: |-
 
   Equipment ID rules:
   - May start with one digit or with letters.
-  - Digit-leading: one digit + 3-4 letters + 3-4 digits.
+  - Digit-leading: one digit + 3-5 letters + 3-4 digits.
   - Letter-leading: 3-4 letters + 3-4 digits.
-  - Regex: (?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}(?![A-Z0-9_])
-  - Examples: 4EKE0104, 4ABC1234, EKE0104, ABC1234, EFG4803
+  - Regex: (?<![A-Z0-9_])(?:\d[A-Z]{3,5}|[A-Z]{3,4})\d{3,4}(?![A-Z0-9_])
+  - Examples: 4EKE0104, 4ABC1234, EKE0104, ABC1234, EFG4803, 6EPERE503
 
   Chamber ID rules:
   - equipment ID + "_" + 1-2 letters + optional single digit 1-8.
   - When chamber is mentioned, chamber_id MUST contain "_". Example: EFG4803_PM1
   - Never put bare equipment or spaced text in chamber_id (wrong: "EFG4803", "EFG4803 PM1").
-  - Regex: (?<![A-Z0-9_])(?:\d[A-Z]{3,4}|[A-Z]{3,4})\d{3,4}_[A-Z]{1,2}[1-8]?(?![A-Z0-9_])
+  - Regex: (?<![A-Z0-9_])(?:\d[A-Z]{3,5}|[A-Z]{3,4})\d{3,4}_[A-Z]{1,2}[1-8]?(?![A-Z0-9_])
   - Examples: 4EKE0104_A, 4EKE0104_PM8, EKE0104_PM1, ABC1234_PM1, EFG4803_PM1
   - Not chamber IDs: 4EKE0104_PM0, EKE0104_PM9, ABC1234_PM12
   - If user writes "EFG4803 PM1" or "EFG4803PM1", normalize to chamber_id="EFG4803_PM1" and eqp_id="EFG4803".
@@ -84,6 +84,59 @@ system_prompt: |-
   - slot as string without leading zero: "3"
   - lot_slot_id format: LOT_ID + "_" + slot. Example: N4ABC12345_3
   - Normalize "N4ABC12345_03" or "slot 03" to slot="3", lot_slot_id="N4ABC12345_3"
+
+  Multi-slot rules (CRITICAL — one task per slot):
+  - Multiple slots for the same lot ALWAYS become separate tasks (never one task with comma-separated slot).
+  - When chamber/equipment is shared, copy the same chamber_id and eqp_id to every slot task.
+  - Each expanded task has exactly one slot and one lot_slot_id.
+  - slot and lot_slot_id are still single values per task (no commas).
+
+  Multi-slot input formats (expand each slot to its own task):
+  1) LOT_ID + comma-separated slot numbers + SLOT/슬롯 keyword:
+     "N6TET02398 2,4 SLOT" or "N6TET12345 2,4번 슬롯" -> slot 2 task + slot 4 task
+  2) Comma-separated lot_slot_id tokens:
+     "N6TET02398_2, N6TET02398_4" -> one task per token
+  3) LOT_ID + underscore + comma-separated slot numbers (slots only after "_"):
+     "N6TET02399_4,5,6" -> lot_id=N6TET02399, slots 4 / 5 / 6 -> three tasks
+     The part before "_" is lot_id; numbers after "_" are slot numbers, not part of lot_id.
+  4) Multiple chamber + lot + multi-slot groups in one sentence (split every slot):
+     Use "이랑", "랑", "and", or comma between groups.
+     Optional Korean labels "장비", "랏" are noise — still extract IDs.
+     "장비 6EPERE503_PM3 랏 N6TET12345 2,4번 슬롯이랑 장비 6EPERE503_PM4 랏 N6TET12341 1,4,7번 슬롯"
+     -> 5 tasks (PM3×2 slots + PM4×3 slots), each with its own chamber/lot/slot.
+
+  Chamber + lot + multi-slot (copy chamber to every slot task):
+  - "6EPRE503_PM3 N6TET02398 2,4 SLOT ERMAP 그려줘"
+    -> tasks=[
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"2","lot_slot_id":"N6TET02398_2"},
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"4","lot_slot_id":"N6TET02398_4"}
+    ]
+  - "6EPRE503_PM3 N6TET02398_2, N6TET02398_4"
+    -> tasks=[
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"2","lot_slot_id":"N6TET02398_2"},
+      {"chamber_id":"6EPRE503_PM3","eqp_id":"6EPRE503","lot_id":"N6TET02398","slot":"4","lot_slot_id":"N6TET02398_4"}
+    ]
+  - "6EPRE503_PM4 N6TET02399_4,5,6 ERMAP 그려줘"
+    -> tasks=[
+      {"chamber_id":"6EPRE503_PM4","eqp_id":"6EPRE503","lot_id":"N6TET02399","slot":"4","lot_slot_id":"N6TET02399_4"},
+      {"chamber_id":"6EPRE503_PM4","eqp_id":"6EPRE503","lot_id":"N6TET02399","slot":"5","lot_slot_id":"N6TET02399_5"},
+      {"chamber_id":"6EPRE503_PM4","eqp_id":"6EPRE503","lot_id":"N6TET02399","slot":"6","lot_slot_id":"N6TET02399_6"}
+    ]
+  - "장비 6EPERE503_PM3 랏 N6TET12345 2,4번 슬롯이랑 장비 6EPERE503_PM4 랏 N6TET12341 1,4,7번 슬롯 ERMAP 그려줘"
+    -> tasks=[
+      {"chamber_id":"6EPERE503_PM3","eqp_id":"6EPERE503","lot_id":"N6TET12345","slot":"2","lot_slot_id":"N6TET12345_2"},
+      {"chamber_id":"6EPERE503_PM3","eqp_id":"6EPERE503","lot_id":"N6TET12345","slot":"4","lot_slot_id":"N6TET12345_4"},
+      {"chamber_id":"6EPERE503_PM4","eqp_id":"6EPERE503","lot_id":"N6TET12341","slot":"1","lot_slot_id":"N6TET12341_1"},
+      {"chamber_id":"6EPERE503_PM4","eqp_id":"6EPERE503","lot_id":"N6TET12341","slot":"4","lot_slot_id":"N6TET12341_4"},
+      {"chamber_id":"6EPERE503_PM4","eqp_id":"6EPERE503","lot_id":"N6TET12341","slot":"7","lot_slot_id":"N6TET12341_7"}
+    ]
+  - "6EPERE503_PM3 N6TET12345 2,4번 슬롯이랑 6EPERE503_PM4 N6TET12341 1,4,7번 슬롯 ERMAP"
+    -> same 5 tasks as above (labels 장비/랏 omitted)
+
+  Multi-slot wrong vs correct:
+  - Wrong: "N6TET02398 2,4 SLOT" -> tasks=[{"lot_id":"N6TET02398","slot":"2,4"}]
+  - Wrong: "N6TET02399_4,5,6" -> tasks=[{"lot_slot_id":"N6TET02399_4,5,6"}]
+  - Wrong: chamber + 2 slots -> one task with two slots
 
   ER MAP request wording (do NOT extract as a type field):
   - Users may say ER MAP, ERMAP, BEVEL, PR STRIP, PRSTRIP, BEVEL BACKSIDE MAP,
