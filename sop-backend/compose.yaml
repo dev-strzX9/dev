@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sop}
+      POSTGRES_DB: sop
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - sop_data:/var/lib/postgresql/data
+      - ./sql/sop_schema.sql:/docker-entrypoint-initdb.d/001-sop.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sop -d sop"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://sop:${POSTGRES_PASSWORD:-sop}@db:5432/sop
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      STATIC_DIR: /app/static
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  sop_data:
